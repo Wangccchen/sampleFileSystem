@@ -91,12 +91,16 @@ int write_inode_by_no(struct inode *ind, long no);
 int read_inode(struct inode *ind, long no);
 
 int determineFileType(const struct inode *myInode);
+int isExistDir(struct inode *ind, char *fname, struct file_directory *fd);
 
 // 功能函数声明
 int get_fd_to_attr(const char *path, struct file_directory *attr);
+int get_parent_and_fname(const char *path, char *parent_path, char *fname);
 int get_info_by_path(const char *path, struct inode *ind, struct file_directory *fd);
 int create_file_dir(const char *path, int flag);
 int remove_file_dir(const char *path, int flag);
+int create_new_fd_to_inode(struct inode *ind, const char *fname);
+int create_dir_by_ino_number(char *fname,char *ext,short int ino_no,char *exp,struct file_directory *fd);
 
 // 要实现的核心文件系统函数在此，fuse会根据命令来对我们编写的函数进行调用
 static struct fuse_operations SFS_oper = {
@@ -219,11 +223,11 @@ static int SFS_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
     return ret;
 }
 
-//SFS_readdir: 根据输入路径来读取该目录，并且显示目录内的内容
-// 在终端中输入ls -l，libfuse会调用该函数
-// 1.根据path读取对应的fd，拿到对应的inode
-// 2.读取目录inode对应的目录数据块
-// 3.遍历该数据块下的所有目录并且显示
+// SFS_readdir: 根据输入路径来读取该目录，并且显示目录内的内容
+//  在终端中输入ls -l，libfuse会调用该函数
+//  1.根据path读取对应的fd，拿到对应的inode
+//  2.读取目录inode对应的目录数据块
+//  3.遍历该数据块下的所有目录并且显示
 static int SFS_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
     struct file_directory *attr = malloc(sizeof(strcut file_directory));
@@ -479,22 +483,19 @@ static int SFS_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_
             }
         }
     }
-    //for循环查找完之后会立刻break
+    // for循环查找完之后会立刻break
     free(attr);
     free(blk);
     free(tinode);
     return 0;
 }
 
-//SFS_mkdir:将新目录添加到根目录，并且更新.directories文件
-//创建目录
+// SFS_mkdir:将新目录添加到根目录，并且更新.directories文件
+// 创建目录
 static int SFS_mkdir(const char *path, mode_t mode)
 {
-	return create_file_dir(path, 2);
+    return create_file_dir(path, 2);
 }
-
-
-
 
 #pragma endregion
 
@@ -928,11 +929,111 @@ int get_info_by_path(const char *path, struct inode *ind, struct file_directory 
     return -1; // 未找到文件！
 }
 
-//该函数创建path所指文件或目录的fd
-//并且创建空闲数据块
-//创建成功返回1，失败返回-1
-int create_file_dir(const char *path, int flag){
+// 该函数用于分割路径得到父目录和要创建的文件名或目录名
+int get_parent_and_fname(const char *path, char **parent_path, char **fname)
+{
+    char *tmp_path = strdup(path);
+    *parent_path = tmp_path; // 记录父目录
+    // 利用strrchr移动到最后一级（文件名或目录名）来取得信息
+    // 首先判断path是不是根目录
+    tmp_path++;                      // 跳过第一个"/"
+    *fname = strrchr(tmp_path, '/'); // 把fname移动到最后一级的/上面
+    if (*fname != NULL)
+    {
+        // 创建的文件不在根目录下
+        **fname = '\0'; // 分割父目录和文件名
+        (*fname)++;     // 指针移动到文件名上
+    }
+    else
+    {
+        // 路径指示文件在根目录下
+        *fname = tmp_path; // 此时tmppath就是文件名
+    }
+    printf("父目录为:%s,创建的文件名或目录名为:%s\n", *parent_path, *fname);
+    return 0;
+}
+
+// 该函数创建path所指文件或目录的fd
+// 并且创建空闲数据块
+// 创建成功返回1，失败返回-1
+int create_file_dir(const char *path, int flag)
+{ // 获得父目录和目录名
+    printf("create_file_dir函数被调用！\n");
+    char *fname, *parent_path;
+    get_parent_and_fname(path, &parent_path, &fname);
+    // 根据父目录来获取父目录的inode和fd
+    struct file_directory *tfd = malloc(sizeof(struct file_directory));
+    struct inode *tinode = malloc(sizeof(struct inode));
+    get_info_by_path(parent_path, tinode, tfd);
+
+    // 判断文件名是否过长
+    if (strlen(fname) > 8)
+    {
+        printf("文件名%s过长，超出8字节！函数终止");
+        return -ENAMETOOLONG;
+    }
+
+    // 要对此时父目录的inode判断，是否为一个目录而不是文件
+    if (determineFileType(tinode) != 1)
+    {
+        // 不为目录
+        free(tfd);
+        free(tinode);
+        return -ENOENT;
+    }
+    // 调用函数，对父目录的inode中加入新创建的目录
+    int res = create_new_fd_to_inode(tinode, fname);
+
+    // 创建成功后返回
+    free(tfd);
+    free(tinode);
+    if (res > 0)
+        res = 0;
+    return res;
+}
+
+// 该函数用于往已知的inode里面添加新建的目录项
+int create_new_fd_to_inode(struct inode *ind, const char *fname)
+{
+    // 为新建的目录项分配空间
+    struct file_directory *fd = malloc(sizeof(struct file_directory));
+    // TODO:对是否存在目录项进行判断
+    if (isExistDir(ind, fname, fd))
+    {
+        free(fd);
+        return -EEXIST;
+    }
     
+    //对该inode中添加目录
+    struct inode *cr_ind = malloc(sizeof(struct inode));
+    struct data_block* cr_blk = malloc(sizeof(struct data_block));
+    //设置创建的目录的inode信息
+
+    cr_ind->st_ino = get_valid_ind();
+    cr_ind->addr[0] = get_valid_blk();
+    //cr_ind->st_mode = 
+    cr_ind->st_size = 0;
+    //设置目录项信息
+    char *tname = strdup(fname);//文件名
+    char *text = strchr(tname,'.');//拓展名的分隔符的指针
+    if(text){
+        //没有拓展名
+        //直接创建
+        create_dir_by_ino_number(tname,"",cr_ind->st_ino,"",fd);
+    }
+    else
+    {
+        //有拓展名，需要分割一下文件名和拓展名
+        *text = '\0';//分割
+        text++;//移动到拓展名位置
+        create_dir_by_ino_number(tname,text,cr_ind->st_ino,"",fd);
+    }
+    fd->st_ino = cr_ind->st_ino;
+    
+    //寻找父目录对应的数据块的末尾块块号
+    short int end_blk = ind->st_size / MAX_DATA_IN_BLOCK;
+    
+
 }
 
 // 辅助函数的定义
