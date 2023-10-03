@@ -28,6 +28,7 @@
 #define FILE_DIRECTORY_SIZE 16
 #define MAX_FILENAME 8
 #define MAX_EXTENSION 3
+#define MAX_DIR_IN_BLOCK MAX_DATA_IN_BLOCK / FILE_DIRECTORY_SIZE
 
 // 用于判断inode对应的文件是文件还是目录
 #define IS_DIRECTORY(mode) (((mode)&S_IFMT) == S_IFDIR)
@@ -86,8 +87,10 @@ char *disk_path = "/home/wangchen/桌面/SFS/disk.img";
 // 辅助函数声明
 int read_block_by_no(struct data_block *dataB_blk, long no);
 int read_inode_by_no(struct inode *ind, long no);
+int read_block_by_ind_and_indNo(struct inode *ind,int indNo,struct data_block *blk);
 int write_block_by_no(struct data_block *dataB_blk, long no);
 int write_inode_by_no(struct inode *ind, long no);
+int write_block_by_ind_and_indNo(struct inode *ind,int indNo,struct data_block *blk);
 int read_inode(struct inode *ind, long no);
 
 int determineFileType(const struct inode *myInode);
@@ -101,6 +104,8 @@ int create_file_dir(const char *path, int flag);
 int remove_file_dir(const char *path, int flag);
 int create_new_fd_to_inode(struct inode *ind, const char *fname);
 int create_dir_by_ino_number(char *fname,char *ext,short int ino_no,char *exp,struct file_directory *fd);
+
+int get_blk_no_by_indNo(struct inode *ind,const short int indNo);
 
 // 要实现的核心文件系统函数在此，fuse会根据命令来对我们编写的函数进行调用
 static struct fuse_operations SFS_oper = {
@@ -987,8 +992,6 @@ int create_file_dir(const char *path, int flag)
     // 创建成功后返回
     free(tfd);
     free(tinode);
-    if (res > 0)
-        res = 0;
     return res;
 }
 
@@ -1030,13 +1033,73 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname)
     }
     fd->st_ino = cr_ind->st_ino;
     
-    //寻找父目录对应的数据块的末尾块块号
+    //寻找父目录对应的数据块的末尾块块号(ind相对块号)
     short int end_blk = ind->st_size / MAX_DATA_IN_BLOCK;
-    
 
+    //首先判断父目录的末尾数据块是否装满
+    //否则需要重新申请一个数据块来放该新建的目录
+    if(ind->st_size % MAX_DATA_IN_BLOCK == 0 && ind->st_size >0){
+        //该数据块正好被用完
+        //要新增一个数据块来装目录的fd
+        end_blk++;//块号增加
+        read_block_by_ind_and_indNo(ind,end_blk,cr_blk);//根据最后一块块号和inode来获取对应的最后一块blk
+        //将上面设置好的新创建的fd复制到cr_blk
+        memcpy(cr_blk->data,fd,sizeof(struct file_directory));
+    }
+    else{
+        //最后一个数据块未装满
+        //可以把新建的fd放进去
+        read_block_by_ind_and_indNo(ind,end_blk,cr_blk);//根据最后一块块号和inode来获取对应的最后一块blk
+        //需要知道在最后一个块要写入的位置
+        short int lastIndex = ind->st_size % MAX_DATA_IN_BLOCK;
+        //把对应的fd写到cr_blk中
+        memcpy(&(cr_blk->data[lastIndex]),fd,sizeof(struct file_directory));
+    }
+    //新增的fd的inode的大小（一个）
+    ind->st_size += 16;
+    //最后就把新建的cr_blk写回磁盘
+    write_block_by_ind_and_indNo(ind,end_blk,cr_blk);
+    //把新建cr_blk对应的fd的inode也写回磁盘
+    write_inode_by_no(ind,ind->st_size);
+    //释放空间
+    free(cr_blk);
+    free(cr_ind);
+    free(fd);
+    free(tname);
+
+    return 0;
 }
 
 // 辅助函数的定义
+
+//该函数根据输入的fname和inode，来判断该inode对应的目录中是否有名为fname的目录项
+int isExistDir(struct inode *ind, char *fname, struct file_directory *fd){
+    //首先判断ind对应的是否是目录
+    if (determineFileType(ind) != 1)
+    {
+        return -ENOTDIR;
+    }
+    //利用for循环对ind目录项下每一块数据块中装着的每个目录进行遍历
+    int total_blk = (ind->st_size + MAX_DATA_IN_BLOCK - 1)/MAX_DATA_IN_BLOCK;//该inode下对应所有数据块数
+    total_blk = total_blk < 1 ? 1 : total_blk;
+    int total_fd = ind->st_size / sizeof(struct file_diretory);//表示所有目录的数量
+    //此时可能出现一个数据块就装完了所有fd
+    //要进行判断
+    total_fd = total_fd < MAX_DIR_IN_BLOCK ? total_fd : MAX_DIR_IN_BLOCK;
+    struct data_block *blk = sizeof(struct data_block);//用于一块块的读取数据块
+    struct file_directory *fd = NULL;//用于指向当前的fd
+    for(int cur = 0; cur < total_blk; cur++){
+        //循环读取inode下对应的所有数据块
+        read_block_by_ind_and_indNo(ind,cur,blk);
+        //fd指针指向当前读取数据块第一块
+        fd = (struct file_directory*)blk->data;
+        for(int cur1 = 0; cur1 < total_fd; cur1++){
+            //如果上一级for循环中fd指向目录的名字和fname相同，则创建的目录已存在！
+            
+        }
+    }
+}
+
 // 函数用于判断inode对应的是文件还是目录
 int determineFileType(const struct inode *myInode)
 {
