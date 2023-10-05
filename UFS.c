@@ -103,7 +103,7 @@ int get_fd_to_attr(const char *path, struct file_directory *attr);
 int get_parent_and_fname(const char *path, char *parent_path, char *fname);
 int get_info_by_path(const char *path, struct inode *ind, struct file_directory *fd);
 int create_file_dir(const char *path);
-int remove_file_dir(struct inode *ind, const char *filename, mode_t filetype);
+int remove_file_dir(struct inode *ind, const char *filename, int flag);
 int create_new_fd_to_inode(struct inode *ind, const char *fname);
 int create_dir_by_ino_number(char *fname, char *ext, short int ino_no, char *exp, struct file_directory *fd);
 int set_inode_and_indBitmap(const int indNo);
@@ -527,13 +527,177 @@ static int SFS_rmdir(const char *path)
         free(tinode);
         return -ENOTDIR;
     }
-    int res = remove_file_dir(tinode, fname, S_IFDIR);
+    // flag置为2表示删除空目录
+    int res = remove_file_dir(tinode, fname, 2);
 
     free(tfd);
     free(tinode);
     return res;
 }
 
+// SFS_mknod：创建一个新的文件
+static int SFS_mknod(const char *path, mode_t mode, dev_t dev)
+{
+    return create_file_dir(path, 1);
+}
+
+// SFS_unlink:删除文件
+static int SFS_unlink(const char *path)
+{
+    // 首先获取父目录路径和文件名
+    char *par_path = NULL;
+    char *fname = NULL;
+    get_parent_and_fname(path, &par_path, &fname);
+    // 根据父目录来获取父目录的inode和fd
+    struct file_directory *tfd = malloc(sizeof(struct file_directory));
+    struct inode *tinode = malloc(sizeof(struct inode));
+    get_info_by_path(par_path, tinode, tfd);
+    // 要对此时父目录的inode判断，是否为一个目录而不是文件
+    if (determineFileType(tinode) != 1)
+    {
+        // 不为目录
+        free(tfd);
+        free(tinode);
+        return -ENOTDIR;
+    }
+    // flag置为1表示删除文件
+    int res = remove_file_dir(tinode, fname, 1);
+
+    free(tfd);
+    free(tinode);
+    return res;
+}
+
+// SFS_access:进入目录
+static int SFS_access(const char *path, int flag)
+{
+    printf("SFS_access:进入目录了！\n");
+    return 0;
+}
+
+// SFS_open：打开文件时的操作
+static int SFS_open(const char *path, struct fuse_file_info *fi)
+{
+    printf("SFS_open:打开了文件！\n");
+    return 0;
+}
+
+// SFS_read:读取文件的操作
+// 根据path找到该文件的inode
+// 根据offset偏移量,读取size大小的数据写入buf
+static int SFS_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+{
+    // 首先根据path获取文件的inode
+    struct inode *tind = malloc(sizeof(struct inode));
+    struct file_directory *tfd = malloc(sizeof(struct file_directory));
+    get_info_by_path(path, tind, tfd);
+    // 判断该文件是否为目录
+    if (determineFileType(tind) != 2)
+    {
+        free(tind);
+        return -EISDIR;
+    }
+    printf("从inode号为%d,偏移%d的位置读取大小为%d的文件内容\n", tind->st_ino, offset, size);
+    // 读取的大小size要小于inode文件的大小tind->st_size
+    // 并且offset不能超过该文件inode所示的大小tind->st_size
+    size_t read_size = size < (tind->st_size - offset) ? size : (tind->st_size - offset);
+    read_size = read_size < 0 ? 0 : read_size; // 保证真实读取的大小要大于0
+
+    // 下面追踪要读取的文件所在数据块的位置信息
+    int blk_no = offset / MAX_DATA_IN_BLOCK;   // 获取数据块号（在inode里面）
+    int p_in_blk = offset % MAX_DATA_IN_BLOCK; // 在当前块中的下标指向
+    size = read_size;                          // 更新读取文件的大小
+    off_t buf_index = offset;                  // 读入buf的下标
+
+    struct data_block *tblk = (struct data_block *)malloc(sizeof(struct data_block));
+    // 利用while循环不断读入新的数据块
+    // 根据size和p_in_blk来找到写入的位置
+    // 然后将size大小的数据写入buf
+    while (buf_index < size)
+    {
+        // 读入块
+        read_block_by_ind_and_indNo(tind, blk_no, tblk);
+        int max_read = MAX_DATA_IN_BLOCK - p_in_blk; // 在当前块中最多能读取的字节
+        // 看看是否超出了本来要读取的size的大小的量
+        if (max_read > size)
+        {
+            max_read = size;
+        }
+        // 写入buf
+        memcpy(buf + buf_index, tblk->data + p_in_blk, max_read);
+        // 读入buf之后，对对应的下标指针都进行相应大小的增加
+        size -= max_read;      // 要读的数据减少已读的数据的大小
+        p_in_blk = 0;          // 下标置为起始位置
+        blk_no++;              // 读取下一个块
+        buf_index += max_read; // 指针移动读取字节数个单位
+    }
+    // 读取完成，释放
+    free(tind);
+    free(tfd);
+    free(tblk);
+    return read_size;
+}
+
+// SFS_write:将buf内容写入文件
+// 根据path找到该文件的inode
+// 根据offset偏移量,读取buf中size大小的数据
+// 写入对应文件的inode和数据块
+static size_t SFS_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+{
+    // 首先获得该文件的inode
+    struct inode *tind = malloc(sizeof(struct inode));
+    struct file_directory *tfd = malloc(sizeof(struct file_directory));
+    get_info_by_path(path, tind, tfd);
+    // 处理写入的块号，在写入块中的下标，在buf中的下标，偏移量
+    int blk_no = offset / MAX_DATA_IN_BLOCK;   // 在inode中的块号
+    int p_in_blk = offset % MAX_DATA_IN_BLOCK; // 在当前块中的位置
+    off_t write_off = offset;                  // 要写入的位置的偏移
+    char *buf_index = buf;                     // buf的下标
+
+    printf("将buf的内容:%s,写入inode号为:%d的偏移%d \n", buf, tind->st_ino, offset);
+    size_t res = size;
+    size_t t_size = size;
+    // 判断文件是否超出
+    if (res + offset > tind->st_size)
+    {
+        // 文件大小超出
+        // 但是仍需追加，不直接返回
+        res = -EFBIG;
+    }
+
+    struct data_block *tblk =malloc(sizeof(struct data_block));
+    // 利用while循环不断读入数据块
+    // 根据size和p_in_blk写入当前的块
+    while (t_size > 0)
+    {
+        read_block_by_ind_and_indNo(tind, blk_no, tblk);
+        //判断一下写入的文件大小和当前块剩余的大小
+        int max_write = (MAX_DATA_IN_BLOCK - p_in_blk) < t_size ?  (MAX_DATA_IN_BLOCK - p_in_blk) : t_size;//剩余可写入的数据大小
+
+        //进行写入的操作
+        memcpy(tblk->data + p_in_blk,buf_index,max_write);//从tblk要写入的位置，写入max_write数据大小
+        //更新该文件的ind信息
+        tind->st_size = tind->st_size > (write_off + max_write) ? tind->st_size : (write_off + max_write);
+        //把该更新的inode写回磁盘
+        write_block_by_ind_and_indNo(tind,blk_no,tblk);
+        //对下标和大小进行更新
+        write_off += max_write;//当前偏移量增加写的大小
+        buf_index += max_write;//buf偏移量增加写的大小
+        t_size -= max_write;//要写入的总数减少
+        blk_no++;//读取下一个块的块号
+        p_in_blk = 0;//从数据块起始位置开始
+    }
+
+    //把更新后的ind信息写回磁盘
+    write_inode_by_no(tind,tind->st_ino);
+
+    //释放内存
+    free(tind);
+    free(tfd);
+    free(tblk);
+
+    return res;
+}
 #pragma endregion
 
 // 功能函数的定义
@@ -992,8 +1156,8 @@ int get_parent_and_fname(const char *path, char **parent_path, char **fname)
 
 // 该函数创建path所指文件或目录的fd
 // 并且创建空闲数据块
-// 创建成功返回1，失败返回-1
-int create_file_dir(const char *path)
+// flag为2代表创建目录，1为代表创建文件
+int create_file_dir(const char *path, int flag)
 { // 获得父目录和目录名
     printf("create_file_dir函数被调用！\n");
     char *fname, *parent_path;
@@ -1019,7 +1183,7 @@ int create_file_dir(const char *path)
         return -ENOENT;
     }
     // 调用函数，对父目录的inode中加入新创建的目录
-    int res = create_new_fd_to_inode(tinode, fname);
+    int res = create_new_fd_to_inode(tinode, fname, flag);
 
     // 创建成功后返回
     free(tfd);
@@ -1029,7 +1193,7 @@ int create_file_dir(const char *path)
 
 // 该函数根据给定的inode，删除对应名称的目录
 // 由rmdir和unlink同时调用
-int remove_file_dir(struct inode *ind, const char *filename, mode_t filetype)
+int remove_file_dir(struct inode *ind, const char *filename, int flag)
 {
     struct inode *tind = malloc(sizeof(struct inode));
     struct file_directory *tfd = malloc(sizeof(struct file_directory));
@@ -1047,7 +1211,7 @@ int remove_file_dir(struct inode *ind, const char *filename, mode_t filetype)
     read_inode_by_fd(tind, tfd);
     // 判断要删除文件的类型
     // 此处由于该函数被多个函数调用，所以做一个if分支
-    if ((filetype & S_IFDIR) != 0)
+    if (flag == 2)
     {
         // 由rmdir调用
         // 判断空目录和是否是目录
@@ -1112,7 +1276,7 @@ int remove_file_dir(struct inode *ind, const char *filename, mode_t filetype)
     return 0;
 }
 // 该函数用于往已知的inode里面添加新建的目录项
-int create_new_fd_to_inode(struct inode *ind, const char *fname)
+int create_new_fd_to_inode(struct inode *ind, const char *fname, int flag)
 {
     // 为新建的目录项分配空间
     struct file_directory *fd = malloc(sizeof(struct file_directory));
@@ -1127,11 +1291,22 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname)
     struct inode *cr_ind = malloc(sizeof(struct inode));
     struct data_block *cr_blk = malloc(sizeof(struct data_block));
     // 设置创建的目录的inode信息
-
+    // 由于此函数被mkdir和mknod同时调用
+    // 所以要进行if判断
+    if (flag == 2)
+    {
+        // 创建的是目录文件
+        cr_ind->st_mode = (0766 | S_IFDIR);
+    }
+    else if (flag == 1)
+    {
+        // 创建的是文件
+        cr_ind->st_mode = (0666 | S_IFREG);
+    }
     cr_ind->st_ino = get_valid_ind();
     cr_ind->addr[0] = get_valid_blk();
-    // cr_ind->st_mode =
-    cr_ind->st_size = 0;
+    cr_ind->st_mode =
+        cr_ind->st_size = 0;
     // 设置目录项信息
     char *tname = strdup(fname);     // 文件名
     char *text = strchr(tname, '.'); // 拓展名的分隔符的指针
