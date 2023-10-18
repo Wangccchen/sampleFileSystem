@@ -119,6 +119,8 @@ int set_inode_and_indBitmap(const int indNo);
 int clear_inode_map_by_no(const short st_ino);
 int get_blk_no_by_indNo(struct inode *ind, const short int indNo); // 根据inode对应的文件的数据块的相对块号，来获取对应数据块的绝对块号
 short assign_block();
+int sec_index(short int addr, int offset, short int blk_offset); // 该函数用于获取二级索引块中的一级索引地址
+int fir_index(short int addr, int offset, short int blk_offset); // 该函数用于获取一级索引块中的直接索引地址
 // 要实现的核心文件系统函数在此，fuse会根据命令来对我们编写的函数进行调用
 static struct fuse_operations SFS_oper = {
     .init = SFS_init,       // 初始化
@@ -1421,6 +1423,53 @@ int clear_inode_map_by_no(const short st_ino)
     }
 }
 
+// 该函数用于获取一级索引块中的直接索引地址
+int fir_index(short int addr, int offset, short int blk_offset)
+{
+}
+
+// 该函数用于获取二级索引块中的一级索引地址
+int sec_index(short int addr, int offset, short int blk_offset)
+{
+    // 具体实现操作思路和三级索引片段代码差不多
+    // 只需修改一下获取地址的逻辑数即可
+    // 该数据块属于二级索引下的数据块
+    // 读取存储二级索引的数据块
+    struct data_block *blk = malloc(sizeof(struct data_block));
+    read_block_by_no(blk, addr);
+    // 该数据块存储的就是所有的二级索引的地址
+    // 找出目标数据块在哪个二级索引块（块号），并且在该块的偏移位置
+
+    int fir_blk_no = offset / (SINGLE_BLOCK_STORE_NO_NUMS);
+    int fir_blk_offset = offset % (SINGLE_BLOCK_STORE_NO_NUMS);
+
+    int max_fir_blk_num = -1;   // 表示二级索引块中的最大索引块数（一级块的数量）
+    int max_fir_blk_index = -1; // 表示二级块中的最后的那个一级块中，所对应的最后一个索引
+    // 通过对blk_offset的大小判断，该二级索引块是否为空
+    if (blk_offset >= 0)
+    {
+        // 更新此时的二级索引块中的内容信息
+        max_fir_blk_num = blk_offset / (SINGLE_BLOCK_STORE_NO_NUMS);
+        max_fir_blk_index = blk_offset % (SINGLE_BLOCK_STORE_NO_NUMS);
+    }
+    // 若此时上面求出的一级索引块号（目标）是超出了二级块中最大索引块号
+    if (fir_blk_no > max_fir_blk_num)
+    {
+        // 重新分配一级索引
+        // fir_blk_no*2是因为块号为short类型2Byte，但是data是char*，里面存储的是char 1Byte，所以要*2
+        *(short int *)(&(blk->data[fir_blk_no * 2])) = assign_block();
+        // 此时最后一个一级块已经创建，但是里面没东西
+        // 所以新创建的最后一个一级块的最后一个索引为-1（表示不存在咯）
+        max_fir_blk_index = -1;
+    }
+    // 此时获得二级块里面的该一级块的地址
+    short int fir_index_addr = *(short int *)(&(blk->data[fir_blk_no * 2]));
+
+    free(blk);
+    // 利用一级索引函数来进行查找
+    return fir_index(fir_index_addr, fir_blk_offset, max_fir_blk_index);
+}
+
 // 根据inode对应的文件的数据块的相对块号，来获取对应数据块的绝对块号
 int get_blk_no_by_indNo(struct inode *ind, const short indNo)
 {
@@ -1476,8 +1525,8 @@ int get_blk_no_by_indNo(struct inode *ind, const short indNo)
         short int sec_index_addr = *(short int *)(&(blk->data[sec_blk_no * 2]));
 
         free(blk);
-
-        return sec_index(sec_index_addr, sec_blk_offset, max_sec_blk_index);
+        // 利用二级索引函数来进行查找
+        number = sec_index(sec_index_addr, sec_blk_offset, max_sec_blk_index);
     }
 }
 
