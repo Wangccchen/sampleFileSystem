@@ -16,6 +16,7 @@
 
 #define BLOCK_SIZE 512
 #define FS_SIZE 8 * 1024 * 1024
+#define INODE_SIZE 64
 #define SUPER_BLOCK 1
 #define ROOT_DIR_BLOCK 1      // 根目录块
 #define INODE_BITMAP_BLOCK 1  // inode位图块数
@@ -23,12 +24,14 @@
 #define INODE_AREA_BLOCK 512  // inode区块数
 #define MAX_DATA_IN_BLOCK 508 // 一个数据块实际能装的大小
 #define BLOCK_NUMS (8 * 1024 * 1024 / BLOCK_SIZE)
+#define INODE_BLOCK_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK + DATA_BITMAP_BLOCK)    //INODE区开始的块号
 #define DATA_BLOCK_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK + DATA_BITMAP_BLOCK + INODE_AREA_BLOCK)         // 数据区开始的块数                                                      //系统总块数
 #define DATA_AREA_BLOCK (BLOCK_NUMS - SUPER_BLOCK - INODE_BITMAP_BLOCK - DATA_BITMAP_BLOCK - INODE_AREA_BLOCK) // 剩下的空闲块数用作数据区的块
 #define FILE_DIRECTORY_SIZE 16
 #define MAX_FILENAME 8
 #define MAX_EXTENSION 3
 #define MAX_DIR_IN_BLOCK MAX_DATA_IN_BLOCK / FILE_DIRECTORY_SIZE
+#define INODE_NUMS_IN_BLOCK BLOCK_SIZE / INODE_SIZE
 
 // 用于判断inode对应的文件是文件还是目录
 #define IS_DIRECTORY(mode) (((mode)&S_IFMT) == S_IFDIR)
@@ -85,13 +88,13 @@ struct data_block
 char *disk_path = "/home/wangchen/桌面/SFS/disk.img";
 
 // 辅助函数声明
-int read_block_by_no(struct data_block *dataB_blk, long no);
-int read_inode_by_no(struct inode *ind, short no);
-int read_inode_by_fd(struct inode *ind, struct file_directory *fd);
-int read_block_by_ind_and_indNo(struct inode *ind, short indNo, struct data_block *blk);
-int write_block_by_no(struct data_block *dataB_blk, long no);
-int write_inode_by_no(struct inode *ind, short no);
-int write_block_by_ind_and_indNo(struct inode *ind, int indNo, struct data_block *blk);
+int read_block_by_no(struct data_block *dataB_blk, long no);    //该函数用于根据数据块号读取对应的数据块
+int read_inode_by_no(struct inode *ind, short no);              //该函数用于根据inode号读取对应的inode
+int read_inode_by_fd(struct inode *ind, struct file_directory *fd); //该函数用于根据给定的fd来读取对应的inode
+int read_block_by_ind_and_indNo(struct inode *ind, short indNo, struct data_block *blk);   //该函数用于根据给定的inode和inode对应的数据块的块号（相对与inode对应的总的所有数据块）来获取对应文件的数据块
+int write_block_by_no(struct data_block *dataB_blk, long no);   //该函数用于根据数据块号来对对应的数据块进行写入
+int write_inode_by_no(struct inode *ind, short no);             //该函数用于根据inode号来对inode写入
+int write_block_by_ind_and_indNo(struct inode *ind, int indNo, struct data_block *blk); //该函数用于根据给定的inode和inode对应的数据块的块号（相对与inode对应的总的所有数据块）来写回对应文件的数据块
 int read_inode(struct inode *ind, long no);
 
 int determineFileType(const struct inode *myInode);
@@ -108,7 +111,7 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname);
 int create_dir_by_ino_number(char *fname, char *ext, short int ino_no, char *exp, struct file_directory *fd);
 int set_inode_and_indBitmap(const int indNo);
 int free_inode(const short st_ino);
-int get_blk_no_by_indNo(struct inode *ind, const short int indNo);
+int get_blk_no_by_indNo(struct inode *ind, const short int indNo);  //根据inode对应的文件的数据块的相对块号，来获取对应数据块的绝对块号
 
 // 要实现的核心文件系统函数在此，fuse会根据命令来对我们编写的函数进行调用
 static struct fuse_operations SFS_oper = {
@@ -1364,6 +1367,18 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname, int flag)
     return 0;
 }
 
+
+int create_dir_by_ino_number(char *fname, char *ext, short int ino_no, char *exp, struct file_directory *fd){
+    //创建一个目录项
+    struct file_directory* dir = malloc(sizeof(struct file_directory));
+    //分别对传入的信息进行写入
+    strncpy(dir->fname,fname,8);
+    strncpy(dir->fext,ext,3);
+    dir->st_ino = ino_no;
+    strncpy(dir->standby,exp,3);
+    return 0;
+}
+
 // 辅助函数的定义
 
 // 该函数根据输入的fname和inode，来判断该inode对应的目录中是否有名为fname的目录项
@@ -1451,4 +1466,105 @@ int determineFileType(const struct inode *myInode)
     {
         return 0; // 未知类型
     }
+}
+
+//辅助函数的实现
+#pragma region 
+
+//该函数用于根据数据块号读取对应的数据块
+int read_block_by_no(struct data_block *dataB_blk, long no){
+    FILE *fp = NULL;
+    fp = fopen(disk_path,"r+");
+    if (fp == NULL)
+	{
+		printf("open file failed:file is not existed!\n");
+		return -1;
+	}
+    //根据数据块号移动fp指针到对应位置
+    fseek(fp,no*BLOCK_SIZE,SEEK_SET);
+    // 开始读取一个block大小的数据到指定的block buf里面
+    fread(dataB_blk,sizeof(struct data_block),1,fp);
+
+    fclose(fp);
+    return 0;
+}
+
+//该函数用于根据inode号读取对应的inode
+int read_inode_by_no(struct inode *ind, short no){
+    //首先找到该inode存在于哪一个快
+    //再找出该inode在该块中的哪一个位置
+    int ind_in_blk_no = no % INODE_NUMS_IN_BLOCK;
+    int blk_no = no / INODE_NUMS_IN_BLOCK;
+
+    //找到inode所在数据块，先将其读取出来
+    struct data_block *blk = (struct data_block *)malloc(sizeof(struct data_block));
+    read_block_by_no(blk,INODE_BLOCK_START_NUM + blk_no);
+
+    // 然后再根据inode号和求出的块中位置找到这个inode，拷贝到ind的buf里面
+    memcpy(ind,((struct inode*)blk)+ind_in_blk_no,sizeof(struct inode));
+
+    // 释放申请的空间
+    free(blk);
+    return 0;
+}
+
+//该函数用于根据给定的fd来读取对应的inode
+int read_inode_by_fd(struct inode *ind, struct file_directory *fd){
+    read_inode_by_no(ind,fd->st_ino);
+    return 0;
+}
+
+//该函数用于根据给定的inode和inode对应的数据块的块号（相对与inode对应的总的所有数据块）来获取对应文件的数据块
+int read_block_by_ind_and_indNo(struct inode *ind, short indNo, struct data_block *blk){
+    //由于inode所对应的文件可能会占用多个数据块
+    //在这里的indNo就代表我们inode对应文件所占用的所有的数据块的相对块号
+    //要转换成对于文件系统的绝对块号
+    int a_blk_no = get_blk_no_by_indNo(ind,indNo);//此处获得的是绝对数据块号
+    int res= read_block_by_no(blk,a_blk_no);//此处根据绝对数据块号来读取对应的blk
+    return res;
+}
+
+//该函数用于根据数据块号来对对应的数据块进行写入
+int write_block_by_no(struct data_block *dataB_blk, long no){
+    //原理和read的那个函数差不多
+    FILE *fp = NULL;
+    fp = fopen(disk_path,"r+");
+    if(fp == NULL){
+        printf("open file failed:file is not existed!\n");
+		return -1;
+    }
+    //移动指针到对应的数据块（根据数据块号）
+    fseek(fp,no*BLOCK_SIZE,SEEK_SET);
+    //写入dataB_blk这个buf的内容到指定数据块中
+    fwrite(dataB_blk,sizeof(struct data_block),1,fp);
+
+    fclose(fp);
+    return 0;
+}
+
+//该函数用于根据inode号来对inode写入
+int write_inode_by_no(struct inode *ind, short no){
+    //首先拿到inode所在的块号
+    int ind_blk_no = INODE_BLOCK_START_NUM + no / INODE_NUMS_IN_BLOCK;
+    //然后再拿到该inode所在块中的位置
+    int ind_offsize = no % INODE_NUMS_IN_BLOCK;
+
+    //根据上面的属性，读出inode所在的这个blk
+    struct data_block *blk = (struct data_block *)malloc(sizeof(struct data_block));
+    read_block_by_no(blk,ind_blk_no);
+    //把传入修改的inode写入该数据块
+    memcpy((struct inode *)blk + ind_offsize,ind,sizeof(struct inode));
+    //写回该数据块
+    write_block_by_no(blk,ind_blk_no);
+
+    free(blk);
+    return 0;
+}
+
+//该函数用于根据给定的inode和inode对应的数据块的块号（相对与inode对应的总的所有数据块）来写回对应文件的数据块
+int write_block_by_ind_and_indNo(struct inode *ind, int indNo, struct data_block *blk){
+    //此处操作和read的函数差不多，区别就是把read_block_by_no换成写函数write_inode_by_no
+    int a_blk_no = get_blk_no_by_indNo(ind,indNo);//此处获得的是绝对数据块号
+    int res= write_block_by_no(blk,a_blk_no);//此处根据绝对数据块号来读取对应的blk
+    return res;
 }
