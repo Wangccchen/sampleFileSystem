@@ -1423,9 +1423,31 @@ int clear_inode_map_by_no(const short st_ino)
     }
 }
 
-// 该函数用于获取一级索引块中的直接索引地址
+// 该函数用于获取一级索引块中的直接索引地址,并且返回块号
+// addr为传入的索引块的地址，offset为在该块中的块号，blk_offset为该块的最大块号
 int fir_index(short int addr, int offset, short int blk_offset)
 {
+    // 具体实现其实和sec_index实现的方法差不多
+    // 设置要返回的块号
+    short int direct_no = -1;
+    //  该数据块属于一级索引下的数据块
+    // 读取存储一级索引的数据块
+    struct data_block *blk = malloc(sizeof(struct data_block));
+    read_block_by_no(blk, addr);
+    // 该数据块存储的就是所有的直接索引的地址
+    // 找出目标数据块在哪个直接索引块（块号）
+    if (offset > blk_offset)
+    {
+        // 此时由于传入的在该块中的目标块号offset超过了该块能存储的最大块号blk_offset
+        // 重新分配一个块给offset
+        *(short int *)(&(blk->data[offset * 2])) = assign_block(); // offset*2是因为一个块号2Byte
+        write_block_by_no(blk, addr);
+    }
+    // 读取该索引块中offset的块号信息
+    direct_no = *(short int *)(&(blk->data[offset * 2]));
+    free(blk);
+    // 返回块号
+    return direct_no;
 }
 
 // 该函数用于获取二级索引块中的一级索引地址
@@ -1437,8 +1459,8 @@ int sec_index(short int addr, int offset, short int blk_offset)
     // 读取存储二级索引的数据块
     struct data_block *blk = malloc(sizeof(struct data_block));
     read_block_by_no(blk, addr);
-    // 该数据块存储的就是所有的二级索引的地址
-    // 找出目标数据块在哪个二级索引块（块号），并且在该块的偏移位置
+    // 该数据块存储的就是所有的一级索引的地址
+    // 找出目标数据块在哪个一级索引块（块号），并且在该块的偏移位置
 
     int fir_blk_no = offset / (SINGLE_BLOCK_STORE_NO_NUMS);
     int fir_blk_offset = offset % (SINGLE_BLOCK_STORE_NO_NUMS);
@@ -1487,6 +1509,7 @@ int get_blk_no_by_indNo(struct inode *ind, const short indNo)
     }
     int number = -1;
     // 对索引进行判断
+    //三级索引
     if (indNo >= TRIPLE_INDEX_NUMS)
     {
         // 找出目标数据块在哪个二级索引中
@@ -1528,6 +1551,31 @@ int get_blk_no_by_indNo(struct inode *ind, const short indNo)
         // 利用二级索引函数来进行查找
         number = sec_index(sec_index_addr, sec_blk_offset, max_sec_blk_index);
     }
+    //二级索引
+    else if (indNo >= SECONDARY_INDEX_NUMS)
+    {
+        int offset = indNo - SECONDARY_INDEX_NUMS;          // 该目标文件的数据块在二级索引块的范围内的偏移（二级块内的第几块）
+        int blk_offset = block_nums - SECONDARY_INDEX_NUMS; // 当前inode对应文件在二级索引块多出来的偏移量
+        number = sec_index(ind->addr[5], offset, blk_offset);
+    }
+    //一级索引
+    else if (indNo >= FIRST_INDEX_NUMS)
+    {
+        int offset = indNo - FIRST_INDEX_NUMS;          // 该目标文件的数据块在一级索引块的范围内的偏移（一级块内的第几块）
+        int blk_offset = block_nums - FIRST_INDEX_NUMS; // 当前inode对应文件在一级索引块多出来的偏移量
+        number = sec_index(ind->addr[4], offset, blk_offset);
+    }
+    //直接索引
+    else{
+        //若要找的该数据块的块号超出了总的块数
+        if(indNo > block_nums){
+            //分配新的块来存放
+            ind->addr[indNo] = assign_block();
+        }
+        //读取该数据块的块号(在存储在inode的直接索引里面找)
+        number = ind->addr[indNo];
+    }
+    return DATA_BLOCK_START_NUM + number;
 }
 
 // 辅助函数的定义
