@@ -1509,7 +1509,7 @@ int get_blk_no_by_indNo(struct inode *ind, const short indNo)
     }
     int number = -1;
     // 对索引进行判断
-    //三级索引
+    // 三级索引
     if (indNo >= TRIPLE_INDEX_NUMS)
     {
         // 找出目标数据块在哪个二级索引中
@@ -1551,28 +1551,30 @@ int get_blk_no_by_indNo(struct inode *ind, const short indNo)
         // 利用二级索引函数来进行查找
         number = sec_index(sec_index_addr, sec_blk_offset, max_sec_blk_index);
     }
-    //二级索引
+    // 二级索引
     else if (indNo >= SECONDARY_INDEX_NUMS)
     {
         int offset = indNo - SECONDARY_INDEX_NUMS;          // 该目标文件的数据块在二级索引块的范围内的偏移（二级块内的第几块）
         int blk_offset = block_nums - SECONDARY_INDEX_NUMS; // 当前inode对应文件在二级索引块多出来的偏移量
         number = sec_index(ind->addr[5], offset, blk_offset);
     }
-    //一级索引
+    // 一级索引
     else if (indNo >= FIRST_INDEX_NUMS)
     {
         int offset = indNo - FIRST_INDEX_NUMS;          // 该目标文件的数据块在一级索引块的范围内的偏移（一级块内的第几块）
         int blk_offset = block_nums - FIRST_INDEX_NUMS; // 当前inode对应文件在一级索引块多出来的偏移量
         number = sec_index(ind->addr[4], offset, blk_offset);
     }
-    //直接索引
-    else{
-        //若要找的该数据块的块号超出了总的块数
-        if(indNo > block_nums){
-            //分配新的块来存放
+    // 直接索引
+    else
+    {
+        // 若要找的该数据块的块号超出了总的块数
+        if (indNo > block_nums)
+        {
+            // 分配新的块来存放
             ind->addr[indNo] = assign_block();
         }
-        //读取该数据块的块号(在存储在inode的直接索引里面找)
+        // 读取该数据块的块号(在存储在inode的直接索引里面找)
         number = ind->addr[indNo];
     }
     return DATA_BLOCK_START_NUM + number;
@@ -1664,6 +1666,47 @@ int determineFileType(const struct inode *myInode)
     else
     {
         return 0; // 未知类型
+    }
+}
+
+// 该函数用于分配一个新的块用作(块号超出的存放)
+// 返回新分配的块的块号
+short assign_block()
+{
+    // 要返回的数据块号
+    short blk_no = 0;
+    // 数据位图区由4个块组成
+    // 利用for循环依次读取每一个块
+    struct data_block *blk = malloc(sizeof(struct data_block));
+    for (short i = 0; i < 4; i++)
+    {
+        // 对数据位图的块进行读取
+        read_block_by_no(blk, DATA_MAP_START_NUM + i);
+        // 对读取的数据位图块进行逐字节的读取
+        unsigned char *p = blk->data;
+        // 利用for循环对该块的每一个字节进行遍历
+        for (int j = 0; j < BLOCK_SIZE; j++)
+        {
+            if (*p != 0xFF)
+            {
+                // 如果该字节出现某个位没有置1的情况
+                // 说明有空闲数据块可以分配
+                // 找到该字节第一个0位的编号
+                int tmp = zerobit_no(p);
+                // 对该位置的bit置1
+                *p |= 0x80 >> tmp;
+                // 再把修改后的blk重新写回磁盘
+                write_block_by_no(blk, DATA_MAP_START_NUM + i);
+                blk_no += tmp; // 获得此时的块号
+                free(blk);
+                return blk_no;
+            }
+            // 如果该字节内的位全部被置1(0xFF)
+            // 说明已经没有空闲的数据块
+            p++;//此时指针偏移到下一个字节
+            
+
+        }
     }
 }
 
