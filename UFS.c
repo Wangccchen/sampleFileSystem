@@ -18,17 +18,17 @@
 #define FS_SIZE 8 * 1024 * 1024
 #define INODE_SIZE 64
 #define SUPER_BLOCK 1
-#define ROOT_DIR_BLOCK 1      // 根目录块
-#define INODE_BITMAP_BLOCK 1  // inode位图块数
-#define DATA_BITMAP_BLOCK 4   // 数据块位图 块数
-#define INODE_AREA_BLOCK 512  // inode区块数
-#define MAX_DATA_IN_BLOCK 508 // 一个数据块实际能装的大小
-#define BLOCK_NUMS (8 * 1024 * 1024 / BLOCK_SIZE)   //文件系统的总块数8MB/512B
+#define ROOT_DIR_BLOCK 1                          // 根目录块
+#define INODE_BITMAP_BLOCK 1                      // inode位图块数
+#define DATA_BITMAP_BLOCK 4                       // 数据块位图 块数
+#define INODE_AREA_BLOCK 512                      // inode区块数
+#define MAX_DATA_IN_BLOCK 508                     // 一个数据块实际能装的大小
+#define BLOCK_NUMS (8 * 1024 * 1024 / BLOCK_SIZE) // 文件系统的总块数8MB/512B
 
-#define INODE_BITMAP_START_NUM SUPER_BLOCK      //INODE位图区开始的块号
-#define DATA_BITMAP_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK)                                                  // 数据位图区开始的块号
-#define INODE_BLOCK_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK + DATA_BITMAP_BLOCK)                           // INODE区开始的块号
-#define DATA_BLOCK_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK + DATA_BITMAP_BLOCK + INODE_AREA_BLOCK)         // 数据区开始的块数                                                      //系统总块数
+#define INODE_BITMAP_START_NUM SUPER_BLOCK                                                             // INODE位图区开始的块号
+#define DATA_BITMAP_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK)                                       // 数据位图区开始的块号
+#define INODE_BLOCK_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK + DATA_BITMAP_BLOCK)                   // INODE区开始的块号
+#define DATA_BLOCK_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK + DATA_BITMAP_BLOCK + INODE_AREA_BLOCK) // 数据区开始的块数                                                      //系统总块数
 
 #define DATA_AREA_BLOCK (BLOCK_NUMS - SUPER_BLOCK - INODE_BITMAP_BLOCK - DATA_BITMAP_BLOCK - INODE_AREA_BLOCK) // 剩下的空闲块数用作数据区的块
 #define FILE_DIRECTORY_SIZE 16
@@ -97,17 +97,17 @@ struct data_block
 char *disk_path = "/home/wangchen/桌面/SFS/disk.img";
 
 // 辅助函数声明
-int read_block_by_no(struct data_block *dataB_blk, short no);                             // 该函数用于根据数据块号读取对应的数据块
+int read_block_by_no(struct data_block *dataB_blk, short no);                            // 该函数用于根据数据块号读取对应的数据块
 int read_inode_by_no(struct inode *ind, short no);                                       // 该函数用于根据inode号读取对应的inode
 int read_inode_by_fd(struct inode *ind, struct file_directory *fd);                      // 该函数用于根据给定的fd来读取对应的inode
 int read_block_by_ind_and_indNo(struct inode *ind, short indNo, struct data_block *blk); // 该函数用于根据给定的inode和inode对应的数据块的块号（相对与inode对应的总的所有数据块）来获取对应文件的数据块
-int write_block_by_no(struct data_block *dataB_blk, short no);                            // 该函数用于根据数据块号来对对应的数据块进行写入
+int write_block_by_no(struct data_block *dataB_blk, short no);                           // 该函数用于根据数据块号来对对应的数据块进行写入
 int write_inode_by_no(struct inode *ind, short no);                                      // 该函数用于根据inode号来对inode写入
 int write_block_by_ind_and_indNo(struct inode *ind, int indNo, struct data_block *blk);  // 该函数用于根据给定的inode和inode对应的数据块的块号（相对与inode对应的总的所有数据块）来写回对应文件的数据块
 int read_inode(struct inode *ind, short no);
 
 int determineFileType(const struct inode *myInode);
-int isExistDir(struct inode *ind, char *fname, struct file_directory *fd, int *blk_no, int *offsize);
+int is_inode_exists_fd_by_fname(struct inode *ind, char *fname, struct file_directory *fd, int *blk_no, int *offsize);
 int is_same_fd(struct file_directory *fd, const char *fname);
 
 // 功能函数声明
@@ -118,10 +118,9 @@ int create_file_dir(const char *path);
 int remove_file_dir(struct inode *ind, const char *filename, int flag);
 int create_new_fd_to_inode(struct inode *ind, const char *fname);
 int create_dir_by_ino_number(char *fname, char *ext, short int ino_no, char *exp, struct file_directory *fd);
-int set_inode_and_indBitmap(const int indNo);
 int clear_inode_map_by_no(const short st_ino);
 int get_blk_no_by_indNo(struct inode *ind, const short int indNo); // 根据inode对应的文件的数据块的相对块号，来获取对应数据块的绝对块号
-short assign_block();   
+short assign_block();
 short assign_inode();
 int sec_index(short int addr, int offset, short int blk_offset); // 该函数用于获取二级索引块中的一级索引地址
 int fir_index(short int addr, int offset, short int blk_offset); // 该函数用于获取一级索引块中的直接索引地址
@@ -776,11 +775,6 @@ int get_info_by_path(const char *path, struct inode *ind, struct file_directory 
     // 查找路径path只会显示文件系统下的路径
     // 意思是把文件系统挂载的路径当成根目录
     printf("get_info_by_path函数开始执行,文件的路径为%s\n\n", path);
-    // 分配数据块，用于等等inode和fd的内容的读取
-    struct data_block *blk = malloc(sizeof(struct data_block));
-    // 先找根目录的inode，一层一层
-    struct inode *tinode = malloc(sizeof(struct tinode));
-    struct file_directory *tfd; // 此处为while循环中利用tfd++来赋值,通过上面的inode先拿到初始的fd
     // 对根目录的判断
     if (strcmp(path, "/") == 0)
     {
@@ -796,21 +790,24 @@ int get_info_by_path(const char *path, struct inode *ind, struct file_directory 
     // 不是根目录
     // 文件查找需要一层一层查找
     // 先拿到根目录的inode（inode号为0）
-    read_inode_by_no(tinode, 0);
+    read_inode_by_no(ind, 0);
     // 开始对路径进行分析
     char *tmp_path, *next_level, *cur_level, *next_ext; // tmp_path用于临时记录路径
     tmp_path = strdup(path);
-    tmp_path++;        // 去掉最前面的一个"/"
-    bool flag = false; // 是否找到文件 的表示
-                       // 逐层检查(利用while循环)
+    tmp_path++;            // 去掉最前面的一个"/"
+    next_level = tmp_path; // 先把下级目录指向根目录下的第一个目录文件
+    bool flag = false;     // 是否找到文件 的表示
+    int layer_level = 0;   // 搜索的层级数
+                           //  逐层检查(利用while循环)
     while (tmp_path != NULL)
     {
-        cur_level = strdup(tmp_path); // 为源码的next_file_name
-        next_level = strchr(tmp_path, "/");
+        cur_level = next_level;
+        next_level = strchr(next_level, '/'); // 检查是否存在下级目录
         next_ext = '\0';
-        // 说明查找的 文件或目录 就在当前目录tmp_path下
         if (next_level == null)
         {
+            //此时已到达输入路径的最底层
+            //cur_level就为最终要找的文件
             flag = true;
             // cur_level = strdup(tmp_path); //此时cur_level为目录的名字
             //  temp_path = strchr(temp_path, '/');
@@ -818,13 +815,29 @@ int get_info_by_path(const char *path, struct inode *ind, struct file_directory 
         else
         {
             // 还存在下一级目录
-            tmp_path = strchr(tmp_path, "/");
-            char *tmp_next_ext = cur_level;
-            tmp_next_ext = strchr(cur_level, "/");
-            // 分割当前目录和下级目录
-            if (tmp_next_ext)
-                *tmp_next_ext = '\0';
+            // 首先分割下级目录和当前目录
+            *next_level = '\0';
+            // 把指针指向下级目录起始位置
+            next_level++;
+            // tmp_path = strchr(tmp_path, "/");
+            // char *tmp_next_ext = cur_level;
+            // tmp_next_ext = strchr(cur_level, "/");
+            // // 分割当前目录和下级目录
+            // if (tmp_next_ext)
+            //     *tmp_next_ext = '\0';
         }
+        // 搜索的层数+1
+        layer_level++;
+        // 要对当前cur_level指向的fd进行判断，是文件还是目录
+        // 只有目录才能进行下一层的遍历
+        if (determineFileType(ind) == 2 && flag != true)
+        {
+            // 如果当前指向的fd是文件，并且没有还有下一级
+            // 说明无法继续遍历，直接返回
+            printf("路径中存在不可继续遍历的文件!路径无效\n");
+            return -ENOENT;
+        }
+        //已经遍历到最底层
         if (flag)
         {
             // 如果已经找到该文件的目录
@@ -836,312 +849,338 @@ int get_info_by_path(const char *path, struct inode *ind, struct file_directory 
                 // 此时cur_level单独指向文件名
                 tmp_dot++;
                 next_ext = tmp_dot;
+                printf("已找到文件！文件名为:%s,拓展名为%s\n", cur_level, next_ext);
             }
-            printf("已找到文件！文件名为:%s,拓展名为%s\n", cur_level, next_ext);
-        }
-        bool isFindInode = false; // 寻找到当前层级下curlevel的inode
-        for (int i = 0; i < 7 && tinode->addr[i] != -1 && !isFindInode, i++)
-        {
-            // 直接索引区addr[0]-addr[3]
-            if (i <= 3)
+            else
             {
-                // 通过addr的地址偏移量来对inode对应的数据块进行读取
-                int check = read_block_by_no(blk, DATA_BLOCK_START_NUM + tinode->addr[i]);
-                if (check == -1)
-                    return -1;                            // 读取失败
-                tfd = (struct file_directory *)blk->data; // tfd指向该数据块的开头，并且偏移量为fd大小
-                int offsize = 0;                          // 记录当前的偏移量
-                // 接下来对整个数据块内装的的目录或文件进行查找
-                // 利用while循环，每次都偏移一个fd的大小
-                while (offsize < blk->size)
-                { // 条件为
-                    // 当前fd的名字fname和curlevel相等
-                    // 并且文件后缀名也相等（文件）或者无后缀名的分割符'.'
-                    if (strcmp(tfd->fname, cur_level) == 0 && (next_ext == '\0' || strcmp(tfd->fext, next_ext) == 0))
-                    {
-                        printf("已找到当前目录或文件:%s\n\n", cur_level);
-                        // 根据fd来获取当前目录文件对应的inode
-                        read_inode_by_no(tinode, tfd->st_ino);
-                        // 设置isFindInode为true
-                        isFindInode = true;
-                        if (flag) // 已经到最后一级路径
-                        {
-                            // 将该fd的信息读取到返回结果中
-                            strcpy(fd->fname, tfd->fname);
-                            strcpy(fd->fext, tfd->fext);
-                            strcpy(fd->standby, tfd->standby);
-                            fd->st_ino = tfd->st_ino;
-                            // 根据fd的inode号来读取对应的inode信息
-                            read_inode_by_no(ind, tfd->st_ino);
-                            printf("找到对应的inode：inode号为:%d\n", tfd->st_ino);
-                            return 0;
-                        }
-                        // 已经找到对应的inode，退出循环
-                        break;
-                    }
-                    // 该fd和当前目录的name不同
-                    offsize += sizeof(struct file_directory);
-                    // 指针偏移fd字节继续查找
-                    tfd++;
-                }
-            }
-            else if (i == 4) // 一级间接寻址
-            {
-                // 与直接寻址不同的是
-                // 在外层先拿到addr[i]一级间接寻址指向的磁盘空间
-                // 这块数据块存的是一个个的目录
-                struct data_block *dir_blk1 = malloc(sizeof(struct data_block));
-                // 根据fd的addr读取改数据块
-                int check1 = read_block_by_no(dir_blk1, DATA_BLOCK_START_NUM + tinode->addr[i]);
-                if (check1 == -1)
-                    return -1;
-                // 设置一个指针指向这个dir_blk1,通过偏移量来指向不同的dir
-                // 记得回来debug这里
-                printf("check dir_blk1 point\n");
-                short int *p1 = dir_blk1->data;
-                int offsize1 = 0;
-                // 利用while循环遍历这些dir
-                // 此处不同的是
-                // 如果内层循环找到了inode，外层循环也退出
-                while (offsize1 < dir_blk1->size && !isFindInode)
-                {
-                    // 依次读出dir_blk1中的fd
-                    int check = read_block_by_no(dir_blk1, DATA_BLOCK_START_NUM + *p1);
-                    if (check == -1)
-                        return -1;
-                    // 下面的操作和直接寻址一样
-                    tfd = (struct file_directory)blk->data;
-                    int offsize = 0; // 记录当前的偏移量
-                    // 接下来对整个数据块内装的的目录或文件进行查找
-                    // 利用while循环，每次都偏移一个fd的大小
-                    // 此处可能出bug
-                    while (offsize < blk->size)
-                    { // 条件为
-                        // 当前fd的名字fname和curlevel相等
-                        // 并且文件后缀名也相等（文件）或者无后缀名的分割符'.'
-                        if (strcmp(tfd->fname, cur_level) == 0 && (next_ext == '\0' || strcmp(tfd->fext, next_ext) == 0))
-                        {
-                            printf("已找到当前目录或文件:%s\n\n", cur_level);
-                            // 根据fd来获取当前目录文件对应的inode
-                            read_inode_by_no(tinode, tfd->st_ino);
-                            // 设置isFindInode为true
-                            isFindInode = true;
-                            if (flag) // 已经到最后一级路径
-                            {
-                                // 将该fd的信息读取到返回结果中
-                                strcpy(fd->fname, tfd->fname);
-                                strcpy(fd->fext, tfd->fext);
-                                strcpy(fd->standby, tfd->standby);
-                                fd->st_ino = tfd->st_ino;
-                                // 根据fd的inode号来读取对应的inode信息
-                                read_inode_by_no(ind, tfd->st_ino);
-                                printf("找到对应的inode：inode号为:%d\n", tfd->st_ino);
-                                return 0;
-                            }
-                            // 已经找到对应的inode，退出循环
-                            break;
-                        }
-                        // 该fd和当前目录的name不同
-                        offsize += sizeof(struct file_directory);
-                        // 指针偏移fd字节继续查找
-                        tfd++;
-                    }
-                    // 内层循环没找到对应的目录文件
-                    // 偏移外层dir数据块的指针，对下一个dir指向的数据块进行查找
-                    p1++;
-                    offsize1 += sizeof(short int);
-                }
-            }
-            else if (i == 5) // 二级间接寻址
-            {
-                // 原理和一级间接寻址一样
-                // 只不过多了一层循环
-                // 此处不多做注释
-                struct data_block *dir_blk2 = malloc(sizeof(struct data_block));
-                int check2 = read_block_by_no(dir_blk2, DATA_BLOCK_START_NUM + tinode->addr[i]);
-                if (check2 = -1)
-                    return -1;
-                short int *p2 = dir_blk2->data;
-                int offsize2 = 0;
-                while (offsize2 < dir_blk2->size && !isFindInode)
-                {
-                    // 下面的内容都可以直接复制一层循环的代码
-                    // 与直接寻址不同的是
-                    // 在外层先拿到addr[i]一级间接寻址指向的磁盘空间
-                    // 这块数据块存的是一个个的目录
-                    struct data_block *dir_blk1 = malloc(sizeof(struct data_block));
-                    // 根据fd的addr读取改数据块
-                    // 此处为唯一修改的的地方
-                    // 偏移量设置为二级间址的指针
-                    int check1 = read_block_by_no(dir_blk1, DATA_BLOCK_START_NUM + *p2);
-                    if (check1 == -1)
-                        return -1;
-                    // 设置一个指针指向这个dir_blk1,通过偏移量来指向不同的dir
-                    // 记得回来debug这里
-                    printf("check dir_blk1 point\n");
-                    short int *p1 = dir_blk1->data;
-                    int offsize1 = 0;
-                    // 利用while循环遍历这些dir
-                    // 此处不同的是
-                    // 如果内层循环找到了inode，外层循环也退出
-                    while (offsize1 < dir_blk1->size && !isFindInode)
-                    {
-                        // 依次读出dir_blk1中的fd
-                        int check = read_block_by_no(dir_blk1, DATA_BLOCK_START_NUM + *p1);
-                        if (check == -1)
-                            return -1;
-                        // 下面的操作和直接寻址一样
-                        tfd = (struct file_directory)blk->data;
-                        int offsize = 0; // 记录当前的偏移量
-                        // 接下来对整个数据块内装的的目录或文件进行查找
-                        // 利用while循环，每次都偏移一个fd的大小
-                        // 此处可能出bug
-                        while (offsize < blk->size)
-                        { // 条件为
-                            // 当前fd的名字fname和curlevel相等
-                            // 并且文件后缀名也相等（文件）或者无后缀名的分割符'.'
-                            if (strcmp(tfd->fname, cur_level) == 0 && (next_ext == '\0' || strcmp(tfd->fext, next_ext) == 0))
-                            {
-                                printf("已找到当前目录或文件:%s\n\n", cur_level);
-                                // 根据fd来获取当前目录文件对应的inode
-                                read_inode_by_no(tinode, tfd->st_ino);
-                                // 设置isFindInode为true
-                                isFindInode = true;
-                                if (flag) // 已经到最后一级路径
-                                {
-                                    // 将该fd的信息读取到返回结果中
-                                    strcpy(fd->fname, tfd->fname);
-                                    strcpy(fd->fext, tfd->fext);
-                                    strcpy(fd->standby, tfd->standby);
-                                    fd->st_ino = tfd->st_ino;
-                                    // 根据fd的inode号来读取对应的inode信息
-                                    read_inode_by_no(ind, tfd->st_ino);
-                                    printf("找到对应的inode：inode号为:%d\n", tfd->st_ino);
-                                    return 0;
-                                }
-                                // 已经找到对应的inode，退出循环
-                                break;
-                            }
-                            // 该fd和当前目录的name不同
-                            offsize += sizeof(struct file_directory);
-                            // 指针偏移fd字节继续查找
-                            tfd++;
-                        }
-                        // 内层循环没找到对应的目录文件
-                        // 偏移外层dir数据块的指针，对下一个dir指向的数据块进行查找
-                        p1++;
-                        offsize1 += sizeof(short int);
-                    }
-                    p2++;
-                    offsize2 += sizeof(short int);
-                }
-            }
-            else // 三级间接寻址
-            {
-                // 同理，只需多加一层while循环，并且改变read dir目录的数据块时候的偏移为上一层的指针即可
-                struct data_block *dir_blk3 = malloc(sizeof(struct data_block));
-                int check3 = read_block_by_no(dir_blk3, DATA_BLOCK_START_NUM + tinode->addr[i]);
-                if (check3 == -1)
-                    return -1;
-                int offsize3 = 0;
-                short int *p3 = dir_blk3->data;
-                while (offsize3 < dir_blk3->size && !isFindInode)
-                {
-                    struct data_block *dir_blk2 = malloc(sizeof(struct data_block));
-                    int check2 = read_block_by_no(dir_blk2, DATA_BLOCK_START_NUM + *p3);
-                    if (check2 = -1)
-                        return -1;
-                    short int *p2 = dir_blk2->data;
-                    int offsize2 = 0;
-                    while (offsize2 < dir_blk2->size && !isFindInode)
-                    {
-                        // 下面的内容都可以直接复制一层循环的代码
-                        // 与直接寻址不同的是
-                        // 在外层先拿到addr[i]一级间接寻址指向的磁盘空间
-                        // 这块数据块存的是一个个的目录
-                        struct data_block *dir_blk1 = malloc(sizeof(struct data_block));
-                        // 根据fd的addr读取改数据块
-                        // 此处为唯一修改的的地方
-                        // 偏移量设置为二级间址的指针
-                        int check1 = read_block_by_no(dir_blk1, DATA_BLOCK_START_NUM + *p2);
-                        if (check1 == -1)
-                            return -1;
-                        // 设置一个指针指向这个dir_blk1,通过偏移量来指向不同的dir
-                        // 记得回来debug这里
-                        printf("check dir_blk1 point\n");
-                        short int *p1 = dir_blk1->data;
-                        int offsize1 = 0;
-                        // 利用while循环遍历这些dir
-                        // 此处不同的是
-                        // 如果内层循环找到了inode，外层循环也退出
-                        while (offsize1 < dir_blk1->size && !isFindInode)
-                        {
-                            // 依次读出dir_blk1中的fd
-                            int check = read_block_by_no(dir_blk1, DATA_BLOCK_START_NUM + *p1);
-                            if (check == -1)
-                                return -1;
-                            // 下面的操作和直接寻址一样
-                            tfd = (struct file_directory)blk->data;
-                            int offsize = 0; // 记录当前的偏移量
-                            // 接下来对整个数据块内装的的目录或文件进行查找
-                            // 利用while循环，每次都偏移一个fd的大小
-                            // 此处可能出bug
-                            while (offsize < blk->size)
-                            { // 条件为
-                                // 当前fd的名字fname和curlevel相等
-                                // 并且文件后缀名也相等（文件）或者无后缀名的分割符'.'
-                                if (strcmp(tfd->fname, cur_level) == 0 && (next_ext == '\0' || strcmp(tfd->fext, next_ext) == 0))
-                                {
-                                    printf("已找到当前目录或文件:%s\n\n", cur_level);
-                                    // 根据fd来获取当前目录文件对应的inode
-                                    read_inode_by_no(tinode, tfd->st_ino);
-                                    // 设置isFindInode为true
-                                    isFindInode = true;
-                                    if (flag) // 已经到最后一级路径
-                                    {
-                                        // 将该fd的信息读取到返回结果中
-                                        strcpy(fd->fname, tfd->fname);
-                                        strcpy(fd->fext, tfd->fext);
-                                        strcpy(fd->standby, tfd->standby);
-                                        fd->st_ino = tfd->st_ino;
-                                        // 根据fd的inode号来读取对应的inode信息
-                                        read_inode_by_no(ind, tfd->st_ino);
-                                        printf("找到对应的inode：inode号为:%d\n", tfd->st_ino);
-                                        return 0;
-                                    }
-                                    // 已经找到对应的inode，退出循环
-                                    break;
-                                }
-                                // 该fd和当前目录的name不同
-                                offsize += sizeof(struct file_directory);
-                                // 指针偏移fd字节继续查找
-                                tfd++;
-                            }
-                            // 内层循环没找到对应的目录文件
-                            // 偏移外层dir数据块的指针，对下一个dir指向的数据块进行查找
-                            p1++;
-                            offsize1 += sizeof(short int);
-                        }
-                        p2++;
-                        offsize2 += sizeof(short int);
-                    }
-                    p3++;
-                    offsize3 += sizeof(short int);
-                }
+                printf("已找到文件！文件名为:%s,无拓展名!\n", cur_level);
             }
         }
-        // 进入下级目录
-        // 继续执行新一轮的目录拆解寻找
-        if (tmp_path != NULL)
-        {
-            tmp_path++;
+        bool isFindInode = false; // 是否寻找到当前层级下curlevel的inode
+        //下面开始通过cur_level的目录名和inode，查找该inode下是否有该cur_level
+        //若找到，则把对应目录或者文件的fd返回到传入的buff:fd中
+        isFindInode = is_inode_exists_fd_by_fname(ind,cur_level,fd,0,0);
+        if(isFindInode == true){
+            //存在cur_level这个目录或者文件
+            //获取fd对应的inode，更新当前的ind,作为下一层的遍历
+            read_inode_by_fd(ind,fd);
         }
+        else{
+            //在inode里面找不到cur_level的fd
+            //直接返回
+            printf("inode下没有对应名为:%s的文件或目录!\n");
+            return -ENOENT;
+        }
+
+        if(flag != true && layer_level < 4){
+            printf("当前目录层级为:%d,将从当前目录:%s 的子目录%s 继续寻找!\n");
+        }
+        else{
+            printf("文件已找到或超出层级限制!\n");
+            break;
+        }
+        // for (int i = 0; i < 7 && tinode->addr[i] != -1 && !isFindInode, i++)
+        // {
+        //     // 直接索引区addr[0]-addr[3]
+        //     if (i <= 3)
+        //     {
+        //         // 通过addr的地址偏移量来对inode对应的数据块进行读取
+        //         int check = read_block_by_no(blk, DATA_BLOCK_START_NUM + tinode->addr[i]);
+        //         if (check == -1)
+        //             return -1;                            // 读取失败
+        //         tfd = (struct file_directory *)blk->data; // tfd指向该数据块的开头，并且偏移量为fd大小
+        //         int offsize = 0;                          // 记录当前的偏移量
+        //         // 接下来对整个数据块内装的的目录或文件进行查找
+        //         // 利用while循环，每次都偏移一个fd的大小
+        //         while (offsize < blk->size)
+        //         { // 条件为
+        //             // 当前fd的名字fname和curlevel相等
+        //             // 并且文件后缀名也相等（文件）或者无后缀名的分割符'.'
+        //             if (strcmp(tfd->fname, cur_level) == 0 && (next_ext == '\0' || strcmp(tfd->fext, next_ext) == 0))
+        //             {
+        //                 printf("已找到当前目录或文件:%s\n\n", cur_level);
+        //                 // 根据fd来获取当前目录文件对应的inode
+        //                 read_inode_by_no(tinode, tfd->st_ino);
+        //                 // 设置isFindInode为true
+        //                 isFindInode = true;
+        //                 if (flag) // 已经到最后一级路径
+        //                 {
+        //                     // 将该fd的信息读取到返回结果中
+        //                     strcpy(fd->fname, tfd->fname);
+        //                     strcpy(fd->fext, tfd->fext);
+        //                     strcpy(fd->standby, tfd->standby);
+        //                     fd->st_ino = tfd->st_ino;
+        //                     // 根据fd的inode号来读取对应的inode信息
+        //                     read_inode_by_no(ind, tfd->st_ino);
+        //                     printf("找到对应的inode：inode号为:%d\n", tfd->st_ino);
+        //                     return 0;
+        //                 }
+        //                 // 已经找到对应的inode，退出循环
+        //                 break;
+        //             }
+        //             // 该fd和当前目录的name不同
+        //             offsize += sizeof(struct file_directory);
+        //             // 指针偏移fd字节继续查找
+        //             tfd++;
+        //         }
+        //     }
+        //     else if (i == 4) // 一级间接寻址
+        //     {
+        //         // 与直接寻址不同的是
+        //         // 在外层先拿到addr[i]一级间接寻址指向的磁盘空间
+        //         // 这块数据块存的是一个个的目录
+        //         struct data_block *dir_blk1 = malloc(sizeof(struct data_block));
+        //         // 根据fd的addr读取改数据块
+        //         int check1 = read_block_by_no(dir_blk1, DATA_BLOCK_START_NUM + tinode->addr[i]);
+        //         if (check1 == -1)
+        //             return -1;
+        //         // 设置一个指针指向这个dir_blk1,通过偏移量来指向不同的dir
+        //         // 记得回来debug这里
+        //         printf("check dir_blk1 point\n");
+        //         short int *p1 = dir_blk1->data;
+        //         int offsize1 = 0;
+        //         // 利用while循环遍历这些dir
+        //         // 此处不同的是
+        //         // 如果内层循环找到了inode，外层循环也退出
+        //         while (offsize1 < dir_blk1->size && !isFindInode)
+        //         {
+        //             // 依次读出dir_blk1中的fd
+        //             int check = read_block_by_no(dir_blk1, DATA_BLOCK_START_NUM + *p1);
+        //             if (check == -1)
+        //                 return -1;
+        //             // 下面的操作和直接寻址一样
+        //             tfd = (struct file_directory)blk->data;
+        //             int offsize = 0; // 记录当前的偏移量
+        //             // 接下来对整个数据块内装的的目录或文件进行查找
+        //             // 利用while循环，每次都偏移一个fd的大小
+        //             // 此处可能出bug
+        //             while (offsize < blk->size)
+        //             { // 条件为
+        //                 // 当前fd的名字fname和curlevel相等
+        //                 // 并且文件后缀名也相等（文件）或者无后缀名的分割符'.'
+        //                 if (strcmp(tfd->fname, cur_level) == 0 && (next_ext == '\0' || strcmp(tfd->fext, next_ext) == 0))
+        //                 {
+        //                     printf("已找到当前目录或文件:%s\n\n", cur_level);
+        //                     // 根据fd来获取当前目录文件对应的inode
+        //                     read_inode_by_no(tinode, tfd->st_ino);
+        //                     // 设置isFindInode为true
+        //                     isFindInode = true;
+        //                     if (flag) // 已经到最后一级路径
+        //                     {
+        //                         // 将该fd的信息读取到返回结果中
+        //                         strcpy(fd->fname, tfd->fname);
+        //                         strcpy(fd->fext, tfd->fext);
+        //                         strcpy(fd->standby, tfd->standby);
+        //                         fd->st_ino = tfd->st_ino;
+        //                         // 根据fd的inode号来读取对应的inode信息
+        //                         read_inode_by_no(ind, tfd->st_ino);
+        //                         printf("找到对应的inode：inode号为:%d\n", tfd->st_ino);
+        //                         return 0;
+        //                     }
+        //                     // 已经找到对应的inode，退出循环
+        //                     break;
+        //                 }
+        //                 // 该fd和当前目录的name不同
+        //                 offsize += sizeof(struct file_directory);
+        //                 // 指针偏移fd字节继续查找
+        //                 tfd++;
+        //             }
+        //             // 内层循环没找到对应的目录文件
+        //             // 偏移外层dir数据块的指针，对下一个dir指向的数据块进行查找
+        //             p1++;
+        //             offsize1 += sizeof(short int);
+        //         }
+        //     }
+        //     else if (i == 5) // 二级间接寻址
+        //     {
+        //         // 原理和一级间接寻址一样
+        //         // 只不过多了一层循环
+        //         // 此处不多做注释
+        //         struct data_block *dir_blk2 = malloc(sizeof(struct data_block));
+        //         int check2 = read_block_by_no(dir_blk2, DATA_BLOCK_START_NUM + tinode->addr[i]);
+        //         if (check2 = -1)
+        //             return -1;
+        //         short int *p2 = dir_blk2->data;
+        //         int offsize2 = 0;
+        //         while (offsize2 < dir_blk2->size && !isFindInode)
+        //         {
+        //             // 下面的内容都可以直接复制一层循环的代码
+        //             // 与直接寻址不同的是
+        //             // 在外层先拿到addr[i]一级间接寻址指向的磁盘空间
+        //             // 这块数据块存的是一个个的目录
+        //             struct data_block *dir_blk1 = malloc(sizeof(struct data_block));
+        //             // 根据fd的addr读取改数据块
+        //             // 此处为唯一修改的的地方
+        //             // 偏移量设置为二级间址的指针
+        //             int check1 = read_block_by_no(dir_blk1, DATA_BLOCK_START_NUM + *p2);
+        //             if (check1 == -1)
+        //                 return -1;
+        //             // 设置一个指针指向这个dir_blk1,通过偏移量来指向不同的dir
+        //             // 记得回来debug这里
+        //             printf("check dir_blk1 point\n");
+        //             short int *p1 = dir_blk1->data;
+        //             int offsize1 = 0;
+        //             // 利用while循环遍历这些dir
+        //             // 此处不同的是
+        //             // 如果内层循环找到了inode，外层循环也退出
+        //             while (offsize1 < dir_blk1->size && !isFindInode)
+        //             {
+        //                 // 依次读出dir_blk1中的fd
+        //                 int check = read_block_by_no(dir_blk1, DATA_BLOCK_START_NUM + *p1);
+        //                 if (check == -1)
+        //                     return -1;
+        //                 // 下面的操作和直接寻址一样
+        //                 tfd = (struct file_directory)blk->data;
+        //                 int offsize = 0; // 记录当前的偏移量
+        //                 // 接下来对整个数据块内装的的目录或文件进行查找
+        //                 // 利用while循环，每次都偏移一个fd的大小
+        //                 // 此处可能出bug
+        //                 while (offsize < blk->size)
+        //                 { // 条件为
+        //                     // 当前fd的名字fname和curlevel相等
+        //                     // 并且文件后缀名也相等（文件）或者无后缀名的分割符'.'
+        //                     if (strcmp(tfd->fname, cur_level) == 0 && (next_ext == '\0' || strcmp(tfd->fext, next_ext) == 0))
+        //                     {
+        //                         printf("已找到当前目录或文件:%s\n\n", cur_level);
+        //                         // 根据fd来获取当前目录文件对应的inode
+        //                         read_inode_by_no(tinode, tfd->st_ino);
+        //                         // 设置isFindInode为true
+        //                         isFindInode = true;
+        //                         if (flag) // 已经到最后一级路径
+        //                         {
+        //                             // 将该fd的信息读取到返回结果中
+        //                             strcpy(fd->fname, tfd->fname);
+        //                             strcpy(fd->fext, tfd->fext);
+        //                             strcpy(fd->standby, tfd->standby);
+        //                             fd->st_ino = tfd->st_ino;
+        //                             // 根据fd的inode号来读取对应的inode信息
+        //                             read_inode_by_no(ind, tfd->st_ino);
+        //                             printf("找到对应的inode：inode号为:%d\n", tfd->st_ino);
+        //                             return 0;
+        //                         }
+        //                         // 已经找到对应的inode，退出循环
+        //                         break;
+        //                     }
+        //                     // 该fd和当前目录的name不同
+        //                     offsize += sizeof(struct file_directory);
+        //                     // 指针偏移fd字节继续查找
+        //                     tfd++;
+        //                 }
+        //                 // 内层循环没找到对应的目录文件
+        //                 // 偏移外层dir数据块的指针，对下一个dir指向的数据块进行查找
+        //                 p1++;
+        //                 offsize1 += sizeof(short int);
+        //             }
+        //             p2++;
+        //             offsize2 += sizeof(short int);
+        //         }
+        //     }
+        //     else // 三级间接寻址
+        //     {
+        //         // 同理，只需多加一层while循环，并且改变read dir目录的数据块时候的偏移为上一层的指针即可
+        //         struct data_block *dir_blk3 = malloc(sizeof(struct data_block));
+        //         int check3 = read_block_by_no(dir_blk3, DATA_BLOCK_START_NUM + tinode->addr[i]);
+        //         if (check3 == -1)
+        //             return -1;
+        //         int offsize3 = 0;
+        //         short int *p3 = dir_blk3->data;
+        //         while (offsize3 < dir_blk3->size && !isFindInode)
+        //         {
+        //             struct data_block *dir_blk2 = malloc(sizeof(struct data_block));
+        //             int check2 = read_block_by_no(dir_blk2, DATA_BLOCK_START_NUM + *p3);
+        //             if (check2 = -1)
+        //                 return -1;
+        //             short int *p2 = dir_blk2->data;
+        //             int offsize2 = 0;
+        //             while (offsize2 < dir_blk2->size && !isFindInode)
+        //             {
+        //                 // 下面的内容都可以直接复制一层循环的代码
+        //                 // 与直接寻址不同的是
+        //                 // 在外层先拿到addr[i]一级间接寻址指向的磁盘空间
+        //                 // 这块数据块存的是一个个的目录
+        //                 struct data_block *dir_blk1 = malloc(sizeof(struct data_block));
+        //                 // 根据fd的addr读取改数据块
+        //                 // 此处为唯一修改的的地方
+        //                 // 偏移量设置为二级间址的指针
+        //                 int check1 = read_block_by_no(dir_blk1, DATA_BLOCK_START_NUM + *p2);
+        //                 if (check1 == -1)
+        //                     return -1;
+        //                 // 设置一个指针指向这个dir_blk1,通过偏移量来指向不同的dir
+        //                 // 记得回来debug这里
+        //                 printf("check dir_blk1 point\n");
+        //                 short int *p1 = dir_blk1->data;
+        //                 int offsize1 = 0;
+        //                 // 利用while循环遍历这些dir
+        //                 // 此处不同的是
+        //                 // 如果内层循环找到了inode，外层循环也退出
+        //                 while (offsize1 < dir_blk1->size && !isFindInode)
+        //                 {
+        //                     // 依次读出dir_blk1中的fd
+        //                     int check = read_block_by_no(dir_blk1, DATA_BLOCK_START_NUM + *p1);
+        //                     if (check == -1)
+        //                         return -1;
+        //                     // 下面的操作和直接寻址一样
+        //                     tfd = (struct file_directory)blk->data;
+        //                     int offsize = 0; // 记录当前的偏移量
+        //                     // 接下来对整个数据块内装的的目录或文件进行查找
+        //                     // 利用while循环，每次都偏移一个fd的大小
+        //                     // 此处可能出bug
+        //                     while (offsize < blk->size)
+        //                     { // 条件为
+        //                         // 当前fd的名字fname和curlevel相等
+        //                         // 并且文件后缀名也相等（文件）或者无后缀名的分割符'.'
+        //                         if (strcmp(tfd->fname, cur_level) == 0 && (next_ext == '\0' || strcmp(tfd->fext, next_ext) == 0))
+        //                         {
+        //                             printf("已找到当前目录或文件:%s\n\n", cur_level);
+        //                             // 根据fd来获取当前目录文件对应的inode
+        //                             read_inode_by_no(tinode, tfd->st_ino);
+        //                             // 设置isFindInode为true
+        //                             isFindInode = true;
+        //                             if (flag) // 已经到最后一级路径
+        //                             {
+        //                                 // 将该fd的信息读取到返回结果中
+        //                                 strcpy(fd->fname, tfd->fname);
+        //                                 strcpy(fd->fext, tfd->fext);
+        //                                 strcpy(fd->standby, tfd->standby);
+        //                                 fd->st_ino = tfd->st_ino;
+        //                                 // 根据fd的inode号来读取对应的inode信息
+        //                                 read_inode_by_no(ind, tfd->st_ino);
+        //                                 printf("找到对应的inode：inode号为:%d\n", tfd->st_ino);
+        //                                 return 0;
+        //                             }
+        //                             // 已经找到对应的inode，退出循环
+        //                             break;
+        //                         }
+        //                         // 该fd和当前目录的name不同
+        //                         offsize += sizeof(struct file_directory);
+        //                         // 指针偏移fd字节继续查找
+        //                         tfd++;
+        //                     }
+        //                     // 内层循环没找到对应的目录文件
+        //                     // 偏移外层dir数据块的指针，对下一个dir指向的数据块进行查找
+        //                     p1++;
+        //                     offsize1 += sizeof(short int);
+        //                 }
+        //                 p2++;
+        //                 offsize2 += sizeof(short int);
+        //             }
+        //             p3++;
+        //             offsize3 += sizeof(short int);
+        //         }
+        //     }
+        // }
+        // // 进入下级目录
+        // // 继续执行新一轮的目录拆解寻找
+        // if (tmp_path != NULL)
+        // {
+        //     tmp_path++;
+        // }
     }
-    // 进入了for循环查询
-    // 但是没有找到对应文件
+    if(layer_level >= 4){
+        printf("超出层级限制无法继续查找文件!\n");
+        return -EPERM;
+    }
     printf("找不到:%s 路径下的文件！\n", path);
-    free(blk);
-    free(tinode);
     return -1; // 未找到文件！
 }
 
@@ -1216,7 +1255,7 @@ int remove_file_dir(struct inode *ind, const char *filename, int flag)
     int blk_no = 0;
     int offsize = 0;
     // 首先判断删除的目录项是否存在
-    if (!isExistDir(ind, filename, tfd, &blk_no, &offsize))
+    if (!is_inode_exists_fd_by_fname(ind, filename, tfd, &blk_no, &offsize))
     {
         free(tfd);
         free(tind);
@@ -1296,7 +1335,7 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname, int flag)
     // 为新建的目录项分配空间
     struct file_directory *fd = malloc(sizeof(struct file_directory));
     // TODO:对是否存在目录项进行判断
-    if (isExistDir(ind, fname, fd, NULL, NULL))
+    if (is_inode_exists_fd_by_fname(ind, fname, fd, NULL, NULL))
     {
         free(fd);
         return -EEXIST;
@@ -1318,11 +1357,11 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname, int flag)
         // 创建的是文件
         cr_ind->st_mode = (0666 | S_IFREG);
     }
-    //下面为新创建的inode信息进行初始化
-    cr_ind->st_ino = assign_inode();//分配新的inode号
-    cr_ind->addr[0] = assign_block();//分配新的数据块
-    cr_ind->st_mode = 
-    cr_ind->st_size = 0;
+    // 下面为新创建的inode信息进行初始化
+    cr_ind->st_ino = assign_inode();  // 分配新的inode号
+    cr_ind->addr[0] = assign_block(); // 分配新的数据块
+    cr_ind->st_mode =
+        cr_ind->st_size = 0;
     // 设置目录项信息
     char *tname = strdup(fname);     // 文件名
     char *text = strchr(tname, '.'); // 拓展名的分隔符的指针
@@ -1585,35 +1624,81 @@ int get_blk_no_by_indNo(struct inode *ind, const short indNo)
     return DATA_BLOCK_START_NUM + number;
 }
 
-//该函数用于为inode里面新建的目录项创建对应的inode
-//在inode位图块中寻找为0的位，置1，计算其inode号返回
-short assign_inode(){
-    //返回值是inode号
+// 该函数用于为inode里面新建的目录项创建对应的inode
+// 在inode位图块中寻找为0的位，置1，计算其inode号返回
+short assign_inode()
+{
+    // 返回值是inode号
     short ind_no = 0;
-    //读取inode位图区数据块
+    // 读取inode位图区数据块
     struct data_block *blk = malloc(sizeof(struct data_block));
-    read_block_by_no(blk,INODE_BITMAP_START_NUM);
-    //对inode位图块的512B进行逐Byte的遍历(利用char*)
-    unsigned char* p = blk->data;
-    for(short i = 0; i < BLOCK_SIZE; i++){
-        //此处做法和分配数据块函数一样
-        //判断该字节的8位是否为全1(0xFF)(是否已全部分配)
-        if(*p != 0xFF){
-            //有未分配的inode
-            //拿出来分配给新建的目录
+    read_block_by_no(blk, INODE_BITMAP_START_NUM);
+    // 对inode位图块的512B进行逐Byte的遍历(利用char*)
+    unsigned char *p = blk->data;
+    for (short i = 0; i < BLOCK_SIZE; i++)
+    {
+        // 此处做法和分配数据块函数一样
+        // 判断该字节的8位是否为全1(0xFF)(是否已全部分配)
+        if (*p != 0xFF)
+        {
+            // 有未分配的inode
+            // 拿出来分配给新建的目录
             int tmp = zerobit_no(p);
-            //把该0位置1
-            *p |= 0x80>>tmp;
-            //把修改后的inode位图块写回磁盘
-            write_block_by_no(blk,INODE_BITMAP_START_NUM);
+            // 把该0位置1
+            *p |= 0x80 >> tmp;
+            // 把修改后的inode位图块写回磁盘
+            write_block_by_no(blk, INODE_BITMAP_START_NUM);
             free(blk);
-            return ind_no+tmp;
+            return ind_no + tmp;
         }
-        //若为全1,则跳过该字节
+        // 若为全1,则跳过该字节
         p++;
-        ind_no+=8;
+        ind_no += 8;
     }
-    //未找到空闲的inode
+    // 未找到空闲的inode
+    free(blk);
+    return -1;
+}
+
+// 该函数用于分配一个新的块用作(块号超出的存放)
+// 返回新分配的块的块号
+short assign_block()
+{
+    // 要返回的数据块号
+    short blk_no = 0;
+    // 数据位图区由4个块组成
+    // 利用for循环依次读取每一个块
+    struct data_block *blk = malloc(sizeof(struct data_block));
+    for (short i = 0; i < 4; i++)
+    {
+        // 对数据位图的块进行读取
+        read_block_by_no(blk, DATA_BITMAP_START_NUM + i);
+        // 对读取的数据位图块进行逐字节的读取
+        unsigned char *p = blk->data;
+        // 利用for循环对该块的每一个字节进行遍历
+        for (int j = 0; j < BLOCK_SIZE; j++)
+        {
+            if (*p != 0xFF)
+            {
+                // 如果该字节出现某个位没有置1的情况
+                // 说明有空闲数据块可以分配
+                // 找到该字节第一个0位的编号
+                int tmp = zerobit_no(p);
+                // 对该位置的bit置1
+                *p |= 0x80 >> tmp;
+                // 再把修改后的blk重新写回磁盘
+                write_block_by_no(blk, DATA_BITMAP_START_NUM + i);
+                blk_no += tmp; // 获得此时的块号
+                free(blk);
+                return blk_no;
+            }
+            // 如果该字节内的位全部被置1(0xFF)
+            // 说明已经没有空闲的数据块
+            p++;         // 此时指针偏移到下一个字节
+            blk_no += 8; // 结果块号移动一个字节的大小
+        }
+    }
+    // 没找到空闲的数据块
     free(blk);
     return -1;
 }
@@ -1621,7 +1706,7 @@ short assign_inode(){
 // 辅助函数的定义
 
 // 该函数根据输入的fname和inode，来判断该inode对应的目录中是否有名为fname的目录项
-int isExistDir(struct inode *ind, char *fname, struct file_directory *fd, int *blk_no, int *offsize)
+int is_inode_exists_fd_by_fname(struct inode *ind, char *fname, struct file_directory *fd, int *blk_no, int *offsize)
 {
     // 首先判断ind对应的是否是目录
     if (determineFileType(ind) != 1)
@@ -1707,55 +1792,11 @@ int determineFileType(const struct inode *myInode)
     }
 }
 
-// 该函数用于分配一个新的块用作(块号超出的存放)
-// 返回新分配的块的块号
-short assign_block()
-{
-    // 要返回的数据块号
-    short blk_no = 0;
-    // 数据位图区由4个块组成
-    // 利用for循环依次读取每一个块
-    struct data_block *blk = malloc(sizeof(struct data_block));
-    for (short i = 0; i < 4; i++)
-    {
-        // 对数据位图的块进行读取
-        read_block_by_no(blk, DATA_BITMAP_START_NUM + i);
-        // 对读取的数据位图块进行逐字节的读取
-        unsigned char *p = blk->data;
-        // 利用for循环对该块的每一个字节进行遍历
-        for (int j = 0; j < BLOCK_SIZE; j++)
-        {
-            if (*p != 0xFF)
-            {
-                // 如果该字节出现某个位没有置1的情况
-                // 说明有空闲数据块可以分配
-                // 找到该字节第一个0位的编号
-                int tmp = zerobit_no(p);
-                // 对该位置的bit置1
-                *p |= 0x80 >> tmp;
-                // 再把修改后的blk重新写回磁盘
-                write_block_by_no(blk, DATA_BITMAP_START_NUM + i);
-                blk_no += tmp; // 获得此时的块号
-                free(blk);
-                return blk_no;
-            }
-            // 如果该字节内的位全部被置1(0xFF)
-            // 说明已经没有空闲的数据块
-            p++;//此时指针偏移到下一个字节
-            blk_no += 8;//结果块号移动一个字节的大小
-        }
-    }
-    //没找到空闲的数据块
-    free(blk);
-    return -1;
-}
-
-
 // 辅助函数的实现
 #pragma region
 
 // 该函数用于根据数据块号读取对应的数据块
-int read_block_by_no(struct data_block *dataB_blk,short  no)
+int read_block_by_no(struct data_block *dataB_blk, short no)
 {
     FILE *fp = NULL;
     fp = fopen(disk_path, "r+");
