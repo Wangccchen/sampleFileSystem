@@ -23,10 +23,13 @@
 #define DATA_BITMAP_BLOCK 4   // 数据块位图 块数
 #define INODE_AREA_BLOCK 512  // inode区块数
 #define MAX_DATA_IN_BLOCK 508 // 一个数据块实际能装的大小
-#define BLOCK_NUMS (8 * 1024 * 1024 / BLOCK_SIZE)
-#define DATA_MAP_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK)                                                  // 数据位图区开始的块号
+#define BLOCK_NUMS (8 * 1024 * 1024 / BLOCK_SIZE)   //文件系统的总块数8MB/512B
+
+#define INODE_BITMAP_START_NUM SUPER_BLOCK      //INODE位图区开始的块号
+#define DATA_BITMAP_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK)                                                  // 数据位图区开始的块号
 #define INODE_BLOCK_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK + DATA_BITMAP_BLOCK)                           // INODE区开始的块号
 #define DATA_BLOCK_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK + DATA_BITMAP_BLOCK + INODE_AREA_BLOCK)         // 数据区开始的块数                                                      //系统总块数
+
 #define DATA_AREA_BLOCK (BLOCK_NUMS - SUPER_BLOCK - INODE_BITMAP_BLOCK - DATA_BITMAP_BLOCK - INODE_AREA_BLOCK) // 剩下的空闲块数用作数据区的块
 #define FILE_DIRECTORY_SIZE 16
 #define MAX_FILENAME 8
@@ -94,14 +97,14 @@ struct data_block
 char *disk_path = "/home/wangchen/桌面/SFS/disk.img";
 
 // 辅助函数声明
-int read_block_by_no(struct data_block *dataB_blk, long no);                             // 该函数用于根据数据块号读取对应的数据块
+int read_block_by_no(struct data_block *dataB_blk, short no);                             // 该函数用于根据数据块号读取对应的数据块
 int read_inode_by_no(struct inode *ind, short no);                                       // 该函数用于根据inode号读取对应的inode
 int read_inode_by_fd(struct inode *ind, struct file_directory *fd);                      // 该函数用于根据给定的fd来读取对应的inode
 int read_block_by_ind_and_indNo(struct inode *ind, short indNo, struct data_block *blk); // 该函数用于根据给定的inode和inode对应的数据块的块号（相对与inode对应的总的所有数据块）来获取对应文件的数据块
-int write_block_by_no(struct data_block *dataB_blk, long no);                            // 该函数用于根据数据块号来对对应的数据块进行写入
+int write_block_by_no(struct data_block *dataB_blk, short no);                            // 该函数用于根据数据块号来对对应的数据块进行写入
 int write_inode_by_no(struct inode *ind, short no);                                      // 该函数用于根据inode号来对inode写入
 int write_block_by_ind_and_indNo(struct inode *ind, int indNo, struct data_block *blk);  // 该函数用于根据给定的inode和inode对应的数据块的块号（相对与inode对应的总的所有数据块）来写回对应文件的数据块
-int read_inode(struct inode *ind, long no);
+int read_inode(struct inode *ind, short no);
 
 int determineFileType(const struct inode *myInode);
 int isExistDir(struct inode *ind, char *fname, struct file_directory *fd, int *blk_no, int *offsize);
@@ -118,7 +121,8 @@ int create_dir_by_ino_number(char *fname, char *ext, short int ino_no, char *exp
 int set_inode_and_indBitmap(const int indNo);
 int clear_inode_map_by_no(const short st_ino);
 int get_blk_no_by_indNo(struct inode *ind, const short int indNo); // 根据inode对应的文件的数据块的相对块号，来获取对应数据块的绝对块号
-short assign_block();
+short assign_block();   
+short assign_inode();
 int sec_index(short int addr, int offset, short int blk_offset); // 该函数用于获取二级索引块中的一级索引地址
 int fir_index(short int addr, int offset, short int blk_offset); // 该函数用于获取一级索引块中的直接索引地址
 // 要实现的核心文件系统函数在此，fuse会根据命令来对我们编写的函数进行调用
@@ -1314,10 +1318,11 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname, int flag)
         // 创建的是文件
         cr_ind->st_mode = (0666 | S_IFREG);
     }
-    cr_ind->st_ino = get_valid_ind();
-    cr_ind->addr[0] = get_valid_blk();
-    cr_ind->st_mode =
-        cr_ind->st_size = 0;
+    //下面为新创建的inode信息进行初始化
+    cr_ind->st_ino = assign_inode();//分配新的inode号
+    cr_ind->addr[0] = assign_block();//分配新的数据块
+    cr_ind->st_mode = 
+    cr_ind->st_size = 0;
     // 设置目录项信息
     char *tname = strdup(fname);     // 文件名
     char *text = strchr(tname, '.'); // 拓展名的分隔符的指针
@@ -1408,7 +1413,7 @@ int clear_inode_map_by_no(const short st_ino)
         int offsize = a_blk_num % (BLOCK_SIZE * 8); // 以bit为单位在位图快中的偏移位置
         // 读取该文件数据块在数据位图区的那个数据块
         struct data_block *blk = malloc(sizeof(struct data_block));
-        read_block_by_no(blk, DATA_MAP_START_NUM + blkmap_index);
+        read_block_by_no(blk, DATA_BITMAP_START_NUM + blkmap_index);
         // 找到要修改的对应的byte
         // 此处先把offsize转换成byte单位来索引到对应的字
         char *bit = &(blk->data[offsize / 8]);
@@ -1417,7 +1422,7 @@ int clear_inode_map_by_no(const short st_ino)
         // 进行置0的左移操作
         *bit &= ~(1 << offsize);
         // 把修改后的blk重新写回磁盘
-        write_block_by_no(blk, DATA_MAP_START_NUM + blkmap_index);
+        write_block_by_no(blk, DATA_BITMAP_START_NUM + blkmap_index);
 
         return 0;
     }
@@ -1580,6 +1585,39 @@ int get_blk_no_by_indNo(struct inode *ind, const short indNo)
     return DATA_BLOCK_START_NUM + number;
 }
 
+//该函数用于为inode里面新建的目录项创建对应的inode
+//在inode位图块中寻找为0的位，置1，计算其inode号返回
+short assign_inode(){
+    //返回值是inode号
+    short ind_no = 0;
+    //读取inode位图区数据块
+    struct data_block *blk = malloc(sizeof(struct data_block));
+    read_block_by_no(blk,INODE_BITMAP_START_NUM);
+    //对inode位图块的512B进行逐Byte的遍历(利用char*)
+    unsigned char* p = blk->data;
+    for(short i = 0; i < BLOCK_SIZE; i++){
+        //此处做法和分配数据块函数一样
+        //判断该字节的8位是否为全1(0xFF)(是否已全部分配)
+        if(*p != 0xFF){
+            //有未分配的inode
+            //拿出来分配给新建的目录
+            int tmp = zerobit_no(p);
+            //把该0位置1
+            *p |= 0x80>>tmp;
+            //把修改后的inode位图块写回磁盘
+            write_block_by_no(blk,INODE_BITMAP_START_NUM);
+            free(blk);
+            return ind_no+tmp;
+        }
+        //若为全1,则跳过该字节
+        p++;
+        ind_no+=8;
+    }
+    //未找到空闲的inode
+    free(blk);
+    return -1;
+}
+
 // 辅助函数的定义
 
 // 该函数根据输入的fname和inode，来判断该inode对应的目录中是否有名为fname的目录项
@@ -1681,7 +1719,7 @@ short assign_block()
     for (short i = 0; i < 4; i++)
     {
         // 对数据位图的块进行读取
-        read_block_by_no(blk, DATA_MAP_START_NUM + i);
+        read_block_by_no(blk, DATA_BITMAP_START_NUM + i);
         // 对读取的数据位图块进行逐字节的读取
         unsigned char *p = blk->data;
         // 利用for循环对该块的每一个字节进行遍历
@@ -1696,7 +1734,7 @@ short assign_block()
                 // 对该位置的bit置1
                 *p |= 0x80 >> tmp;
                 // 再把修改后的blk重新写回磁盘
-                write_block_by_no(blk, DATA_MAP_START_NUM + i);
+                write_block_by_no(blk, DATA_BITMAP_START_NUM + i);
                 blk_no += tmp; // 获得此时的块号
                 free(blk);
                 return blk_no;
@@ -1704,17 +1742,20 @@ short assign_block()
             // 如果该字节内的位全部被置1(0xFF)
             // 说明已经没有空闲的数据块
             p++;//此时指针偏移到下一个字节
-            
-
+            blk_no += 8;//结果块号移动一个字节的大小
         }
     }
+    //没找到空闲的数据块
+    free(blk);
+    return -1;
 }
+
 
 // 辅助函数的实现
 #pragma region
 
 // 该函数用于根据数据块号读取对应的数据块
-int read_block_by_no(struct data_block *dataB_blk, long no)
+int read_block_by_no(struct data_block *dataB_blk,short  no)
 {
     FILE *fp = NULL;
     fp = fopen(disk_path, "r+");
@@ -1771,7 +1812,7 @@ int read_block_by_ind_and_indNo(struct inode *ind, short indNo, struct data_bloc
 }
 
 // 该函数用于根据数据块号来对对应的数据块进行写入
-int write_block_by_no(struct data_block *dataB_blk, long no)
+int write_block_by_no(struct data_block *dataB_blk, short no)
 {
     // 原理和read的那个函数差不多
     FILE *fp = NULL;
