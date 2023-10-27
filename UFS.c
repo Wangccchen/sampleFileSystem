@@ -106,7 +106,7 @@ int write_block_by_ind_and_indNo(struct inode *ind, int indNo, struct data_block
 int read_inode(struct inode *ind, short no);
 
 int determineFileType(const struct inode *myInode);
-int is_inode_exists_fd_by_fname(struct inode *ind, char *fname, struct file_directory *fd, int *blk_no, int *offsize);
+int is_inode_exists_fd_by_fname(struct inode *ind, const char *fname, struct file_directory *fd, int *blk_no, int *offsize);
 int is_same_fd(struct file_directory *fd, const char *fname);
 
 // 功能函数声明
@@ -196,13 +196,14 @@ static int SFS_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
     // 重新设置stbuf的内容
     memset(stbuf, 0, sizeof(struct stat));
     struct file_directory *t_file_directory = malloc(sizeof(struct file_directory));
+    int res = get_info_by_path(path, ino_tmp, t_file_directory);
     // 非根目录
-    if (get_info_by_path(path, ino_tmp, t_file_directory) != 0)
+    if (res != 0)
     {
         free(t_file_directory);
         free(ino_tmp);
-        printf("SFS_getattr：get_fd_to_attr时没找到文件，函数结束返回\n");
-        return -ENOENT;
+        printf("SFS_getattr：get_info_by_path时没找到文件或超出层级限制，函数结束返回\n");
+        return res;
     }
     // 读取了path下对应的inode和fd，赋值给stbuf
     //  读取inode的数据并赋给stbuf
@@ -272,13 +273,14 @@ static int SFS_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_
     filler(buf, ".", NULL, 0, 0);
     filler(buf, "..", NULL, 0, 0);
     // // 设置一个装文件名的char数组
-    char name[MAX_FILENAME + MAX_EXTENSION + 2];
+    char *name = malloc(MAX_FILENAME + MAX_EXTENSION + 2);
+    memset(name, '\0', MAX_FILENAME + MAX_EXTENSION + 2);
     // 接下来的操作就是对inode中的每一个目录项进行提取对应的fd
     // 拿到对应的filename，然后放入buf中
 
     // 具体操作为：先利用for循环拿到inode目录项下的每一个数据块
     // 然后依次读取数据块存储的fd，提取其名字放入buf
-    int fd_num = (tinode->st_size) / FILE_DIRECTORY_SIZE;                        // inode一共有多少个fd
+    int fd_num = (tinode->st_size) / sizeof(struct file_directory);              // inode一共有多少个fd
     int fd_in_blk = fd_num;                                                      //  在第二层for循环中读取每个数据块中的数量的临时变量
     int blk_num = (tinode->st_size + MAX_DATA_IN_BLOCK - 1) / MAX_DATA_IN_BLOCK; // inode的目录项占有多少个数据块
     for (int i = 0; i < blk_num; i++)
@@ -299,8 +301,12 @@ static int SFS_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_
                 if (strlen(fd->fext) != 0)
                 {
                     strcat(name, ".");
+                    strncat(name, fd->fext, 3);
                 }
-                strncat(name, fd->fext, 3);
+                else
+                {
+                    printf("SFS_readdir:文件或目录:%s 没有拓展名!", name);
+                }
                 filler(buf, name, NULL, 0, 0); // 写入到buf中
                 fd++;                          // 指针偏移到blk中的下一个fd
             }
@@ -625,7 +631,7 @@ int get_info_by_path(const char *path, struct inode *ind, struct file_directory 
     int flag = 0;          // 是否找到文件 的表示
     int layer_level = 0;   // 搜索的层级数
                            //  逐层检查(利用while循环)
-    while (tmp_path != NULL)
+    while (next_level != NULL)
     {
         cur_level = next_level;
         next_level = strchr(next_level, '/'); // 检查是否存在下级目录
@@ -643,6 +649,7 @@ int get_info_by_path(const char *path, struct inode *ind, struct file_directory 
             // 还存在下一级目录
             // 首先分割下级目录和当前目录
             *next_level = '\0';
+            printf("get_info_by_path:分割后,输出本层目录的名字cur_level:%s\n", cur_level);
             // 把指针指向下级目录起始位置
             next_level++;
             // tmp_path = strchr(tmp_path, "/");
@@ -654,6 +661,14 @@ int get_info_by_path(const char *path, struct inode *ind, struct file_directory 
         }
         // 搜索的层数+1
         layer_level++;
+        printf("输出当前层级:%d\n", layer_level);
+        // 判断此时的层级是否超出限制
+        // 若超出了限制，就不进行下面的新建操作
+        if (layer_level >= 4)
+        { // 超出了限制，直接返回
+            printf("get_info_by_path:超出层级限制无法继续查找文件!\n");
+            return -EPERM;
+        }
         // 要对当前cur_level指向的fd进行判断，是文件还是目录
         // 只有目录才能进行下一层的遍历
         if (determineFileType(ind) == 2 && flag != 1)
@@ -663,29 +678,36 @@ int get_info_by_path(const char *path, struct inode *ind, struct file_directory 
             printf("路径中存在不可继续遍历的文件!路径无效\n");
             return -ENOENT;
         }
+
         // 已经遍历到最底层
         if (flag)
         {
             // 如果已经找到该文件的目录
             // 对文件及其后缀名进行分割
             char *tmp_dot = strchr(cur_level, '.');
-
+            // 首先保存原来的全名
+            char *tname = strdup(cur_level);
             if (tmp_dot != NULL)
             {
                 *tmp_dot = '\0'; // 把文件名和后缀名分开成两个串
                 // 此时cur_level单独指向文件名
                 tmp_dot++;
                 next_ext = tmp_dot;
-                printf("已找到文件！文件名为:%s,拓展名为%s\n", cur_level, next_ext);
+                printf("get_info_by_path:已通过路径提取出文件名！文件名为:%s,拓展名为%s\n", cur_level, next_ext);
+                // 再把当前文件名重新指向原来的名字
+                cur_level = tname;
             }
             else
             {
-                printf("已找到文件！文件名为:%s,无拓展名!\n", cur_level);
+                printf("get_info_by_path:已通过路径提取出文件名！文件名为:%s,文件名长度为:%d,无拓展名!\n", cur_level, strlen(cur_level));
+                // 把当前文件名限定在8个字节
             }
+            printf("get_info_by_path:此时保存原文件全名为:%s\n", tname);
         }
         int isFindInode = 0; // 是否寻找到当前层级下curlevel的inode
         // 下面开始通过cur_level的目录名和inode，查找该inode下是否有该cur_level
         // 若找到，则把对应目录或者文件的fd返回到传入的buff:fd中
+        printf("get_info_by_path:传入is_inode_exists_fd_by_fname:原文件全名为:%s\n", cur_level);
         isFindInode = is_inode_exists_fd_by_fname(ind, cur_level, fd, 0, 0);
         if (isFindInode == 1)
         {
@@ -697,29 +719,23 @@ int get_info_by_path(const char *path, struct inode *ind, struct file_directory 
         {
             // 在inode里面找不到cur_level的fd
             // 直接返回
-            printf("inode下没有对应名为:%s的文件或目录!\n", cur_level);
+            printf("get_info_by_path:inode下没有对应名为:%s的文件或目录!\n", cur_level);
             return -ENOENT;
         }
 
         if (flag != 1 && layer_level < 4)
         {
-            printf("当前目录层级为:%d,将从当前目录:%s 的子目录%s 继续寻找!\n", layer_level, cur_level, next_level);
+            printf("get_info_by_path:当前目录层级为:%d,将从当前目录:%s 的子目录%s 继续寻找!\n", layer_level, cur_level, next_level);
         }
         else
         {
-            printf("文件已找到或超出层级限制!\n");
+            printf("get_info_by_path:文件已找到\n");
             break;
         }
     }
-    // 此时进行判断退出while循环的原因
-    // 是为层级限制还是文件已找到
-    if (layer_level >= 4)
-    {
-        printf("超出层级限制无法继续查找文件!\n");
-        return -EPERM;
-    }
+
     // 此时退出的情况为已找到文件
-    printf("文件已经找到!\n");
+    // printf("get_info_by_path:文件已经找到!\n");
     return 0;
 }
 
@@ -761,6 +777,13 @@ int create_file_dir(const char *path, int flag)
     struct file_directory *tfd = malloc(sizeof(struct file_directory));
     struct inode *tinode = malloc(sizeof(struct inode));
     int tmp1 = get_info_by_path(parent_path, tinode, tfd);
+    // 首先判断路径是否超出了层级的限制或者没在inode里面找到对应的fd
+    if (tmp1 != 0)
+    { // 超出了层级限制或者没在inode里面找到对应的fd
+        free(tfd);
+        free(tinode);
+        return tmp1;
+    }
     printf("create_file_dir:创建成功前，父目录inode号为:%d,大小为%d\n", tinode->st_ino, tinode->st_size);
     // 判断文件名是否过长
     int tooLong = 0;
@@ -930,29 +953,31 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname, int flag)
     char *text = strchr(tname, '.'); // 拓展名的分隔符的指针
     if (text == NULL)
     {
-        printf("准备创建文件:%s\n", tname);
+        // printf("准备创建文件:%s\n", tname);
         // 没有拓展名
         // 直接创建
         create_dir_by_ino_number(tname, "", cr_ind->st_ino, "", fd);
+        // printf("create_new_fd_to_inode:创建的fd不存在拓展名:%s\n", fd->fext);
     }
     else
     {
-        printf("准备创建文件:%s\n", tname);
+        // printf("准备创建文件:%s\n", tname);
         // 有拓展名，需要分割一下文件名和拓展名
         *text = '\0'; // 分割
         text++;       // 移动到拓展名位置
         create_dir_by_ino_number(tname, text, cr_ind->st_ino, "", fd);
+        // printf("create_new_fd_to_inode:创建的fd存在拓展名:%s\n", fd->fext);
     }
     fd->st_ino = cr_ind->st_ino;
-    printf("创建fd成功，名为:%s,inode号为:%d\n", fd->fname, fd->st_ino);
+    // printf("创建fd成功，名为:%s,inode号为:%d\n", fd->fname, fd->st_ino);
     // 寻找父目录对应的数据块的末尾块块号(ind相对块号)
     short int end_blk = ind->st_size / MAX_DATA_IN_BLOCK;
-    printf("要放入的快号为%d\n", end_blk);
+    // printf("要放入的快号为%d\n", end_blk);
     // 首先判断父目录的末尾数据块是否装满
     // 否则需要重新申请一个数据块来放该新建的目录
     if (ind->st_size % MAX_DATA_IN_BLOCK == 0 && ind->st_size > 0)
     {
-        printf("需要新增数据块来存放该dir\n");
+        // printf("需要新增数据块来存放该目录或文件\n");
         // 该数据块正好被用完
         // 要新增一个数据块来装目录的fd
         end_blk++;                                         // 块号增加
@@ -962,17 +987,17 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname, int flag)
     }
     else
     {
-        printf("准备将新建的dir放入!\n");
+        // printf("准备将新建的目录或文件放入!\n");
         // 最后一个数据块未装满
         // 可以把新建的fd放进去
         read_block_by_ind_and_indNo(ind, end_blk, cr_blk); // 根据最后一块块号和inode来获取对应的最后一块blk
         // 需要知道在最后一个块要写入的位置
         short int lastIndex = ind->st_size % MAX_DATA_IN_BLOCK;
-        printf("lastIndex:%d\n", lastIndex);
+        // printf("lastIndex:%d\n", lastIndex);
         // 把对应的fd写到cr_blk中
         memcpy(&(cr_blk->data[lastIndex]), fd, sizeof(struct file_directory));
     }
-    printf("rootInodesize:%d\n", ind->st_size);
+    // printf("rootInodesize:%d\n", ind->st_size);
     // 新增的fd的inode的大小（一个）
     ind->st_size += sizeof(struct file_directory);
     // 把修改后的inode写回
@@ -980,35 +1005,35 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname, int flag)
     // 最后就把新建的cr_blk写回磁盘
     write_block_by_ind_and_indNo(ind, end_blk, cr_blk);
 
-    {
-        // 看看有没有写进去
-        read_block_by_ind_and_indNo(ind, end_blk, cr_blk); // 根据最后一块块号和inode来获取对应的最后一块blk
-        // 需要知道在最后一个块要写入的位置
-        short int lastIndex = strlen(cr_blk->data) % MAX_DATA_IN_BLOCK;
-        printf("lastIndex:%d\n", lastIndex);
+    // {
+    //     // 看看有没有写进去
+    //     read_block_by_ind_and_indNo(ind, end_blk, cr_blk); // 根据最后一块块号和inode来获取对应的最后一块blk
+    //     // 需要知道在最后一个块要写入的位置
+    //     short int lastIndex = strlen(cr_blk->data) % MAX_DATA_IN_BLOCK;
+    //     printf("lastIndex:%d\n", lastIndex);
 
-        struct inode *tid = malloc(sizeof(struct inode));
-        read_inode_by_no(tid, 0);
-        printf("rootInodesize:%d\n", tid->st_size);
-        free(tid);
-    }
-    printf("新建的inode号:%d,对应存放的地址：%d\n", cr_ind->st_ino, cr_ind->addr[0]);
+    //     struct inode *tid = malloc(sizeof(struct inode));
+    //     read_inode_by_no(tid, 0);
+    //     printf("rootInodesize:%d\n", tid->st_size);
+    //     free(tid);
+    // }
+    // printf("新建的inode号:%d,对应存放的地址：%d\n", cr_ind->st_ino, cr_ind->addr[0]);
     // 把新建cr_blk对应的fd的inode也写回磁盘
     write_inode_by_no(cr_ind, cr_ind->st_ino);
 
-    {
-        struct inode *tid1 = malloc(sizeof(struct inode));
-        // 看看有没有写进去
-        read_inode_by_no(tid1, cr_ind->st_ino);
-        printf("检验新建的inode号:%d,对应存放的地址：%d\n", tid1->st_ino, tid1->addr[0]);
-        printf("newInodesize:%d\n", tid1->st_size);
-        // free(tid);
+    // {
+    //     struct inode *tid1 = malloc(sizeof(struct inode));
+    //     // 看看有没有写进去
+    //     read_inode_by_no(tid1, cr_ind->st_ino);
+    //     printf("检验新建的inode号:%d,对应存放的地址：%d\n", tid1->st_ino, tid1->addr[0]);
+    //     printf("newInodesize:%d\n", tid1->st_size);
+    //     // free(tid);
 
-        // struct inode *tid = malloc(sizeof(struct inode));
-        read_inode_by_no(tid1, 0);
-        printf("rootInodesize:%d\n", tid1->st_size);
-        free(tid1);
-    }
+    //     // struct inode *tid = malloc(sizeof(struct inode));
+    //     read_inode_by_no(tid1, 0);
+    //     printf("rootInodesize:%d\n", tid1->st_size);
+    //     free(tid1);
+    // }
     // 释放空间
     free(cr_blk);
     free(cr_ind);
@@ -1021,7 +1046,7 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname, int flag)
 // 该函数用于直接创建一个dir并初始化内容
 int create_dir_by_ino_number(char *fname, char *ext, short int ino_no, char *exp, struct file_directory *fd)
 {
-
+    memset(fd, 0, FILE_DIRECTORY_SIZE);
     // 分别对传入的信息进行写入
     strncpy(fd->fname, fname, 8);
     strncpy(fd->fext, ext, 3);
@@ -1048,7 +1073,7 @@ int clear_inode_map_by_no(const short st_ino)
         // 然后根据绝对块号来计算数据块在数据位图的位置
         int blkmap_index = a_blk_num / (BLOCK_SIZE * 8);
         int offsize = a_blk_num % (BLOCK_SIZE * 8); // 以bit为单位在位图快中的偏移位置
-                                                    // 读取该文件数据块在数据位图区的那个数据块
+        // 读取该文件数据块在数据位图区的那个数据块
         struct data_block *blk = malloc(sizeof(struct data_block));
         read_block_by_no(blk, DATA_BITMAP_START_NUM + blkmap_index);
         // 找到要修改的对应的byte
@@ -1317,17 +1342,12 @@ int zerobit_no(unsigned char *p)
     return res;
 }
 
-// 该函数获取传入的fd的filename
-int get_fd_name(struct file_directory *fd, char *fname)
-{
-}
-
 // 辅助函数的定义
 
 // 该函数根据输入的fname和inode，来判断该inode对应的目录中是否有名为fname的目录项
-int is_inode_exists_fd_by_fname(struct inode *ind, char *fname, struct file_directory *fd, int *blk_no, int *offsize)
+int is_inode_exists_fd_by_fname(struct inode *ind, const char *fname, struct file_directory *fd, int *blk_no, int *offsize)
 {
-    printf("is_inode_exists_fd_by_fname:传入的inode大小为:%d\n", ind->st_size);
+    // printf("is_inode_exists_fd_by_fname:传入的inode大小为:%d\n", ind->st_size);
     // 首先判断ind对应的是否是目录
     if (determineFileType(ind) != 1)
     {
@@ -1336,11 +1356,11 @@ int is_inode_exists_fd_by_fname(struct inode *ind, char *fname, struct file_dire
     // 利用for循环对ind目录项下每一块数据块中装着的每个目录进行遍历
     int total_blk = (ind->st_size + MAX_DATA_IN_BLOCK - 1) / MAX_DATA_IN_BLOCK; // 该inode下对应所有数据块数
     total_blk = total_blk < 1 ? 1 : total_blk;
-    printf("一个file大小为:%d\n", sizeof(struct file_directory));
-    printf("一个inode大小为:%d\n", sizeof(struct inode));
+    // printf("一个file大小为:%d\n", sizeof(struct file_directory));
+    // printf("一个inode大小为:%d\n", sizeof(struct inode));
     int total_fd = (ind->st_size) / FILE_DIRECTORY_SIZE; // 表示所有目录的数量
-    printf("is_inode_exists_fd_by_fname:总共的fd:%d\n", total_fd);
-    printf("is_inode_exists_fd_by_fname:总共的块数:%d\n", total_blk);
+    // printf("is_inode_exists_fd_by_fname:总共的fd:%d\n", total_fd);
+    // printf("is_inode_exists_fd_by_fname:总共的块数:%d\n", total_blk);
     // 此时可能出现一个数据块就装完了所有fd
     // 要进行判断
     total_fd = total_fd < MAX_DIR_IN_BLOCK ? total_fd : MAX_DIR_IN_BLOCK;
@@ -1388,15 +1408,25 @@ int is_inode_exists_fd_by_fname(struct inode *ind, char *fname, struct file_dire
 // 判断传入的fd和fname是否一致
 int is_same_fd(struct file_directory *fd, const char *fname)
 {
-    char name[MAX_FILENAME + MAX_EXTENSION + 2];
+    // char name[MAX_FILENAME + MAX_EXTENSION + 2];
+    char *name = malloc(MAX_FILENAME + MAX_EXTENSION + 2);
+    memset(name, '\0', MAX_FILENAME + MAX_EXTENSION + 2);
     // 拼接fd的文件名
     strncpy(name, fd->fname, 8);
+    // printf("is_same_fd:输出拼接前:要复制到name数组的名字:%s,复制后name数组的内容:%s\n", fd->fname, name);
+    // char *tname = NULL;
+    // strncpy(tname, name, 8);
+    // printf("只输出前8个字节的内容:%s\n", tname);
     // 检查拓展名字段是否为空
-    if (strlen(fd->fext) != 0)
+    if (strcmp(fd->fext, "") != 0)
     {
         strcat(name, ".");
+        strncat(name, fd->fext, 3);
     }
-    strncat(name, fd->fext, 3);
+    else
+    {
+        printf("is_same_fd:拓展名为空！\n");
+    }
     printf("is_same_fd:根据路径传入的文件名为:%s,遍历数据块的当前的fd的名字为:%s\n", fname, name);
     if (strcmp(name, fname) == 0)
         return 1;
@@ -1449,15 +1479,15 @@ int read_inode_by_no(struct inode *ind, short no)
     // 再找出该inode在该块中的哪一个位置
     int ind_in_blk_no = no % INODE_NUMS_IN_BLOCK;
     int blk_no = INODE_BLOCK_START_NUM + no / INODE_NUMS_IN_BLOCK;
-    printf("read_inode_by_no:此时计算出要读入的inode号为%d,inode所在的块号为%d\n", no, blk_no);
-    printf("read_inode_by_no:该inode所在块中的位置为%d\n", ind_in_blk_no);
+    // printf("read_inode_by_no:此时计算出要读入的inode号为%d,inode所在的块号为%d\n", no, blk_no);
+    // printf("read_inode_by_no:该inode所在块中的位置为%d\n", ind_in_blk_no);
     // 找到inode所在数据块，先将其读取出来
     struct data_block *blk = (struct data_block *)malloc(sizeof(struct data_block));
     read_block_by_no(blk, blk_no);
 
     // 然后再根据inode号和求出的块中位置找到这个inode，拷贝到ind的buf里面
     memcpy(ind, ((struct inode *)blk) + ind_in_blk_no, sizeof(struct inode));
-    printf("read_inode_by_no:检验:此时读入的inode号为%d,inode大小为%d,连接数量为:%d\n", ind->st_ino, ind->st_size, ind->st_nlink);
+    // printf("read_inode_by_no:检验:此时读入的inode号为%d,inode大小为%d,连接数量为:%d\n", ind->st_ino, ind->st_size, ind->st_nlink);
     // 释放申请的空间
     free(blk);
     return 0;
