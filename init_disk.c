@@ -68,10 +68,12 @@ struct data_block
     char data[MAX_DATA_IN_BLOCK]; // 一个块里面实际能存的数据大小
 };
 
+const char *disk_path = "/home/wc/桌面/SFS/disk.img";
+
 int main()
 {
     FILE *fp = NULL;
-    fp = fopen("/home/wangchen/桌面/SFS/disk.img", "r+"); // 打开文件
+    fp = fopen(disk_path, "r+"); // 打开文件
     if (fp == NULL)
     {
         printf("打开文件失败，文件不存在\n");
@@ -91,7 +93,7 @@ int main()
     super_blk->databitmap_size = DATA_BITMAP_BLOCK;
     fseek(fp, 0, SEEK_SET);
     fwrite(super_blk, sizeof(struct sb), 1, fp);
-    printf("initial super_block success!\n");
+    printf("SPUER_BLOCK init success!\n");
 
     // 2.初始化inode位图区 1块 512B = 4Kbit
     // 首先将指针移动到文件的第二块
@@ -105,8 +107,8 @@ int main()
     // 0x80是128，表示一个B里面的8个bit全1（补码表示）
     inode_bitmap->data[0] = 0x80;
     fseek(fp, SUPER_BLOCK * BLOCK_SIZE, SEEK_SET);
-    fwrite(inode_bitmap, sizeof(struct inode_bitmap), 1, fp);
-    printf("initial inode_bitmap_area success!\n");
+    fwrite(inode_bitmap, sizeof(struct data_block), 1, fp);
+    printf("INODE_BITMAP_BLOCK init success!\n");
     free(inode_bitmap);
 
     // 3.初始化数据位图区 4块 4*512B = 16K bit
@@ -126,7 +128,7 @@ int main()
     fwrite(block, sizeof(struct data_block), 1, fp);
     fwrite(block, sizeof(struct data_block), 1, fp);
     fwrite(block, sizeof(struct data_block), 1, fp);
-    printf("initial data_bitmap_block success!\n");
+    printf("DATA_BITMAP_BLOCK init success!\n");
 
     // 4.初始化inode区  512块
     // 这里先把数据块转化成inode
@@ -143,7 +145,7 @@ int main()
     if (fseek(fp, (SUPER_BLOCK + INODE_BITMAP_BLOCK + DATA_BITMAP_BLOCK) * BLOCK_SIZE, SEEK_SET) != 0) // 将指针移动到INODE区的起始位置
         fprintf(stderr, "INODE area fseek failed!\n");
     fwrite(block, sizeof(struct data_block), 1, fp);
-    printf("initial inode_area success!\n");
+    printf("INODE_AREA initial  success!\n");
 
     // 5.初始化数据区dataArea
     // 其实就是写入一个目录文件的数据块
@@ -153,20 +155,8 @@ int main()
     fwrite(block, sizeof(struct data_block), 1, fp);
     // 把目录项写进数据区之后，释放掉该block
     free(block);
-    close(fp);
-    printf("DATA AREA init success!\n");
+    fclose(fp);
+    printf("DATA_AREA init success!\n");
 
     // 上述操作完成之后初始化完毕
-
-    {
-        FILE *fp;
-        fp = fopen(diskpath, "r+");
-        fseek(fp, (ROOT_DIR_BLOCK + INODE_BITMAP_BLOCK + DATA_BITMAP_BLOCK) * BLOCK_SIZE, SEEK_SET);
-        struct data_block *b = malloc(sizeof(struct data_block));
-        fread(b, sizeof(struct data_block), 1, fp);
-        struct inode *ino = (struct inode *)b;
-        printf("%d\n%o\n", ino->st_size, ino->st_mode);
-        free(b);
-    }
-    return 0;
 }
