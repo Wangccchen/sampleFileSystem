@@ -31,7 +31,7 @@
 #define DATA_BLOCK_START_NUM (SUPER_BLOCK + INODE_BITMAP_BLOCK + DATA_BITMAP_BLOCK + INODE_AREA_BLOCK) // 数据区开始的块数                                                      //系统总块数
 
 #define DATA_AREA_BLOCK (BLOCK_NUMS - SUPER_BLOCK - INODE_BITMAP_BLOCK - DATA_BITMAP_BLOCK - INODE_AREA_BLOCK) // 剩下的空闲块数用作数据区的块
-#define FILE_DIRECTORY_SIZE 16
+#define FILE_DIRECTORY_SIZE sizeof(struct file_directory)
 #define MAX_FILENAME 8
 #define MAX_EXTENSION 3
 #define MAX_DIR_IN_BLOCK (MAX_DATA_IN_BLOCK / FILE_DIRECTORY_SIZE)
@@ -220,11 +220,14 @@ static int SFS_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
     {
     case 1:
         printf("这是一个名为%s的目录，inode号为%d\n", t_file_directory->fname, t_file_directory->st_ino);
-        stbuf->st_mode = S_IFDIR | 0766;
+        // 目录通常需要具有可读（列出目录内容）和可执行（能进入目录）权限
+        //  典型的目录权限是755，表示用户可读写执行，组和其他用户只读执行
+        stbuf->st_mode = S_IFDIR | 0755;
         break;
     case 2:
         printf("这是一个文件名为%s的文件，inode号为%d\n", t_file_directory->fname, t_file_directory->st_ino);
-        stbuf->st_mode = S_IFREG | 0666;
+        // 典型的文件权限通常是644，表示用户可读写，组和其他用户只读
+        stbuf->st_mode = S_IFREG | 0644;
         stbuf->st_size = ino_tmp->st_size;
         break;
     default:
@@ -485,6 +488,7 @@ static int SFS_read(const char *path, char *buf, size_t size, off_t offset, stru
 // 写入对应文件的inode和数据块
 static size_t SFS_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
+    printf("SFS_write开始执行!\n");
     // 首先获得该文件的inode
     struct inode *tind = malloc(sizeof(struct inode));
     struct file_directory *tfd = malloc(sizeof(struct file_directory));
@@ -495,13 +499,14 @@ static size_t SFS_write(const char *path, const char *buf, size_t size, off_t of
     off_t write_off = offset;                  // 要写入的位置的偏移
     char *buf_index = buf;                     // buf的下标
 
-    printf("将buf的内容:%s,写入inode号为:%d的偏移%ld \n", buf, tind->st_ino, offset);
+    printf("SFS_write:将buf的内容: %s 写入inode号为: %d ,inode对应的数据块号: %d ,从偏移: %ld 写入\n", buf, tind->st_ino, blk_no, offset);
     size_t res = size;
     size_t t_size = size;
-    // 判断文件是否超出
-    if (res + offset > tind->st_size)
+    printf("SFS_write:buf内要对文件: %s 进行写入，内容大小为: %ld\n", tfd->fname, size);
+    // 判断要写入的位置是否越界(超出文件大小)
+    if (offset > tind->st_size)
     {
-        // 文件大小超出
+        // offset超出文件大小
         // 但是仍需追加，不直接返回
         res = -EFBIG;
     }
@@ -825,8 +830,15 @@ int create_file_dir(const char *path, int flag)
     // 调用函数，对父目录的inode中加入新创建的目录
 
     int res = create_new_fd_to_inode(tinode, fname, flag);
-    printf("create_file_dir:创建成功后，父目录inode号为:%d,大小为%d\n", tinode->st_ino, tinode->st_size);
-    // 创建成功后返回
+    if (res == 0)
+    {
+        printf("create_file_dir:创建成功后,父目录inode号为:%d,大小为%d\n", tinode->st_ino, tinode->st_size);
+    }
+    else
+    {
+        printf("create_file_dir:创建失败，错误代码为:%d\n", res);
+    }
+    // 创建操作后返回
     free(tfd);
     free(tinode);
     return res;
@@ -916,9 +928,19 @@ int remove_file_dir(struct inode *ind, const char *filename, int flag)
     free(tfd);
     return 0;
 }
-// 该函数用于往已知的inode里面添加新建的目录项
+// 该函数用于往已知的inode里面添加新建的目录项或文件
 int create_new_fd_to_inode(struct inode *ind, const char *fname, int flag)
 {
+    // 根据要求，不能在根目录下创建
+    // 首先要判断创建的文件是否处于根目录下
+    // 根据传入的inode的号是否为0来判断
+    if (ind->st_ino == 0 && flag == 1)
+    {
+        // 创建的文件在根目录下，不符合要求，直接返回
+        printf("create_new_fd_to_inode:创建的文件: %s 在根目录下，不符合要求", fname);
+        return -EPERM;
+    }
+
     // 为新建的目录项分配空间
     struct file_directory *fd = malloc(sizeof(struct file_directory));
     // TODO:对是否存在目录项进行判断
@@ -937,12 +959,15 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname, int flag)
     if (flag == 2)
     {
         // 创建的是目录文件
-        cr_ind->st_mode = (0766 | S_IFDIR);
+        // 目录通常需要具有可读（列出目录内容）和可执行（能进入目录）权限
+        // 典型的目录权限是755，表示用户可读写执行，组和其他用户只读执行
+        cr_ind->st_mode = (0755 | S_IFDIR);
     }
     else if (flag == 1)
     {
         // 创建的是文件
-        cr_ind->st_mode = (0666 | S_IFREG);
+        // 典型的文件权限通常是644，表示用户可读写，组和其他用户只读
+        cr_ind->st_mode = (0644 | S_IFREG);
     }
     // 下面为新创建的inode信息进行初始化
     cr_ind->st_ino = assign_inode();  // 分配新的inode号
@@ -1046,7 +1071,7 @@ int create_new_fd_to_inode(struct inode *ind, const char *fname, int flag)
 // 该函数用于直接创建一个dir并初始化内容
 int create_dir_by_ino_number(char *fname, char *ext, short int ino_no, char *exp, struct file_directory *fd)
 {
-    memset(fd, 0, FILE_DIRECTORY_SIZE);
+    memset(fd, 0, sizeof(struct file_directory));
     // 分别对传入的信息进行写入
     strncpy(fd->fname, fname, 8);
     strncpy(fd->fext, ext, 3);
@@ -1358,7 +1383,7 @@ int is_inode_exists_fd_by_fname(struct inode *ind, const char *fname, struct fil
     total_blk = total_blk < 1 ? 1 : total_blk;
     // printf("一个file大小为:%d\n", sizeof(struct file_directory));
     // printf("一个inode大小为:%d\n", sizeof(struct inode));
-    int total_fd = (ind->st_size) / FILE_DIRECTORY_SIZE; // 表示所有目录的数量
+    int total_fd = (ind->st_size) / sizeof(struct file_directory); // 表示所有目录的数量
     // printf("is_inode_exists_fd_by_fname:总共的fd:%d\n", total_fd);
     // printf("is_inode_exists_fd_by_fname:总共的块数:%d\n", total_blk);
     // 此时可能出现一个数据块就装完了所有fd
