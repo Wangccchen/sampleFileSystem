@@ -1,3 +1,5 @@
+// Author:王琛 202130441801
+// Github: https://github.com/Wangccchen/sampleFileSystem
 #define FUSE_USE_VERSION 31
 #include <fuse3/fuse.h>
 #include <time.h>
@@ -48,7 +50,6 @@
 
 // 数据结构的定义
 #pragma region
-// #pragma pack(1)
 // 超级块sb 占用一个磁盘块 总字节为72B
 struct sb
 {
@@ -103,7 +104,6 @@ int read_block_by_ind_and_indNo(struct inode *ind, short indNo, struct data_bloc
 int write_block_by_no(struct data_block *dataB_blk, short no);                           // 该函数用于根据数据块号来对对应的数据块进行写入
 int write_inode_by_no(struct inode *ind, short no);                                      // 该函数用于根据inode号来对inode写入
 int write_block_by_ind_and_indNo(struct inode *ind, int indNo, struct data_block *blk);  // 该函数用于根据给定的inode和inode对应的数据块的块号（相对与inode对应的总的所有数据块）来写回对应文件的数据块
-int read_inode(struct inode *ind, short no);
 
 int determineFileType(const struct inode *myInode);
 int is_inode_exists_fd_by_fname(struct inode *ind, const char *fname, struct file_directory *fd, int *blk_no, int *offsize);
@@ -111,7 +111,6 @@ int is_same_fd(struct file_directory *fd, const char *fname);
 
 // 功能函数声明
 int get_fd_to_attr(const char *path, struct file_directory *attr);
-// int get_fd_name(struct file_directory *fd, char *fname);
 int get_parent_and_fname(const char *path, char **parent_path, char **fname);
 int get_info_by_path(const char *path, struct inode *ind, struct file_directory *fd);
 int create_file_dir(const char *path, int flag);
@@ -1255,7 +1254,7 @@ int get_blk_no_by_indNo(struct inode *ind, const short indNo)
     {
         int offset = indNo - FIRST_INDEX_NUMS;          // 该目标文件的数据块在一级索引块的范围内的偏移（一级块内的第几块）
         int blk_offset = block_nums - FIRST_INDEX_NUMS; // 当前inode对应文件在一级索引块多出来的偏移量
-        number = sec_index(ind->addr[4], offset, blk_offset);
+        number = fir_index(ind->addr[4], offset, blk_offset);
     }
     // 直接索引
     else
