@@ -11,9 +11,8 @@
 
 ## 2. 使用方法
 1. 首先将两个.c文件和makefile放入一个目录中
-2. 初始化磁盘  
-<pre>dd bs=512 count=16384 if=/dev/zero of=disk.img</pre>  
-其中 disk.img 是要创建的磁盘文件的名字
+2. 初始化磁盘，其中 disk.img 是要创建的磁盘文件的名字  
+<pre>dd bs=512 count=16384 if=/dev/zero of=disk.img</pre>    
 3. 修改两个.c文件中的此行代码，将路径改为对应的磁盘文件的路径  
 <pre>const char *disk_path = "/home/wc/桌面/SFS/disk.img";</pre>
 4. 执行 make 命令编译代码  
